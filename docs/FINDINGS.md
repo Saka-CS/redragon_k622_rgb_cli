@@ -286,7 +286,8 @@ K92=0x02,0x74,0x00,24   ; G5
 ```
 
 These are macro IDs, not confirmed LED slots. The physical board shows G1–G4 and
-MR, not a separate G5. Calibration will resolve the naming.
+MR, not a separate G5. Hardware testing later showed these keys have no
+addressable RGB LEDs, so the IDs do not map to extra RGB slots.
 
 `[KEY]` has **no entries** for G1–G4, MR, or the media buttons.
 
@@ -533,9 +534,9 @@ Implications:
 | License | MIT | MIT (default) |
 
 The reference project is much broader than the confirmed scope. The K622
-implementation will deliberately stop at the core CLI, profiles, and four
-effects. Daemon/IPC, GUI, MQTT, reactive key effects, and ambient modes are
-future work.
+implementation deliberately stops at the core CLI, local profiles, and the
+keyboard's 20 built-in effects plus Self-define and OFF. Daemon/IPC, GUI, MQTT,
+reactive key effects, and ambient modes are future work.
 
 ## 9. Open questions and risks
 
@@ -551,8 +552,9 @@ future work.
 4. **Built-in effect override** — Resolved. A per-key `09 cc` frame is ignored
    while an effect mode is active; `k622rgb set` now switches the board to
    Self-define mode by default.
-5. **Persistence** — Lighting likely resets on power cycle. The tool will not
-   write onboard memory unless proven safe.
+5. **Persistence** — Resolved. The config and effect palette survive an
+   unplug/replug power cycle. The tool still never writes the keymap, macro or
+   profile-table memory; only the captured config/palette/frame shapes are sent.
 6. **udev/uaccess timing** — `TAG+="uaccess"` depends on the login seat. If the
    ACL does not appear, fall back to `MODE="0666"` or a dedicated group.
 7. **Frame rate/flicker** — 30 FPS over hidraw should be fine, but the board may
@@ -560,7 +562,9 @@ future work.
 8. **Regional/wireless variants** — US QWERTY wired only. ISO, Bluetooth, and
    2.4 GHz variants are out of scope.
 9. **Shared K618/K622 config** — Some `Cfg.ini` entries (e.g., G5) may belong to
-   a sibling variant. Calibration resolves what this board actually has.
+   a sibling variant. Hardware testing showed the K622's extra slots
+   `102–125` are duplicate/dead positions, so there are no extra RGB keys to
+   map.
 10. **Label typo** — `SrcLock` in `Cfg.ini` is normalized to `ScrLk`.
 11. **Multiple keyboards/concurrency** — Another tool (official software in a
     VM, OpenRGB, a second instance) could fight for the device. The CLI should

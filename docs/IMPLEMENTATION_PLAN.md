@@ -22,8 +22,8 @@ keyboard, modeled on
 > `102–125` and the 15 `Cfg.ini` gaps are duplicate/dead matrix positions
 > (slot 105 = LCtrl, slot 6 = F5). The calibration command, `layout.json`
 > loading and the extra-key aliases were removed from the CLI. The RGB set is
-> the 87 main keys only. The historical calibration material below is kept for
-> context and does not describe the current tool.
+> the 87 main keys only. The historical calibration material has been removed
+> from this plan because it does not describe the current tool.
 >
 > **Phase 3 status (2026-11-01): implemented.** The built-in effects are driven
 > by the keyboard itself, not host-side animation: `mode`, `color`, `config`
@@ -35,12 +35,15 @@ keyboard, modeled on
 
 ## 1. Confirmed scope
 
-- **Core CLI + effects + profiles** — no daemon, GUI, MQTT, or systemd service.
-- **Interactive calibration** for sibling Sinowealth variants. On the K622, hardware testing showed the G/MR/media keys are not RGB; the 87 main keys are the RGB set.
+- **Core CLI + onboard effects + profiles** — no daemon, GUI, MQTT, or systemd
+  service.
+- **The 87 main keys** are the complete RGB set. The G/MR/media keys are not
+  RGB; slot calibration and `layout.json` were removed after hardware testing.
 - **Pure Python standard library** + `bin/k622rgb` launcher — no pip, venv, or
   third-party runtime modules.
 - **Wired USB, US QWERTY K622 only.**
-- **Safety:** only the LED feature report is sent; no firmware/bootloader path.
+- **Safety:** only the declared feature reports and captured K622 frames; no
+  firmware, bootloader, macro or keymap writes.
 
 ## 2. Non-goals
 
@@ -49,39 +52,44 @@ keyboard, modeled on
 - No Bluetooth/2.4 GHz or ISO-layout variants.
 - No daemon, GUI, MQTT, plugin system, ambient/system-monitor modes, or
   notification overlays.
-- No onboard profile persistence unless Phase 0 proves it is safe and stable.
+- No keymap, macro or profile-table writes. The captured config/palette
+  commands do persist lighting settings, and that persistence is confirmed
+  across a power cycle.
 
 ## 3. Architecture
 
 ```text
-keyboard_RGB_controller/
+k622rgb/
 ├── bin/
 │   └── k622rgb                 # launcher; runs python3 -m k622rgb
 ├── k622rgb/
 │   ├── __init__.py
 │   ├── __main__.py             # python -m k622rgb
 │   ├── cli.py                  # argparse, command dispatch, output
-│   ├── controller.py           # discovery, ioctl, packet builder
+│   ├── controller.py           # discovery, report codecs, ioctl, frame builders
 │   ├── layout.py               # slot→key map, aliases, dead slots
-│   ├── colors.py               # hex / named / r,g,b parsing
-│   ├── profiles.py             # profile + state JSON storage
-│   ├── effects.py              # static/breathing/rainbow/wave
-│   └── doctor.py               # diagnostics
+│   ├── colors.py               # hex / named / r,g,b parsing and scaling
+│   ├── profiles.py             # local lighting profile storage
+│   ├── state.py                # last-frame and backup storage
+│   └── data/
+│       └── template_color.bin  # captured 1032-byte report-0x06 template
 ├── udev/
 │   └── 60-k622rgb.rules
 ├── tests/
+│   ├── test_cli.py
+│   ├── test_colors.py
+│   ├── test_controller.py
 │   ├── test_descriptor.py
 │   ├── test_layout.py
-│   ├── test_colors.py
-│   ├── test_profiles.py
-│   ├── test_effects.py
-│   ├── test_controller.py
-│   └── test_cli.py
+│   ├── test_modes.py
+│   ├── test_packet.py
+│   └── test_profiles.py
 ├── docs/
 │   ├── README.md
 │   ├── FINDINGS.md
 │   ├── PROTOCOL.md
 │   ├── KEYMAP.md
+│   ├── RGB_MODES.md
 │   └── IMPLEMENTATION_PLAN.md
 ├── README.md
 ├── LICENSE                     # MIT
@@ -95,12 +103,11 @@ keyboard_RGB_controller/
 
 | Module | Responsibility |
 |---|---|
-| `controller.py` | Find IF1, open hidraw, build/validate the 382-byte frame, send `HIDIOCSFEATURE`. Only public write API is `send_led_frame()`. |
-| `layout.py` | Static main-key map and aliases for slots `0–101`. |
-| `colors.py` | Parse `#RRGGBB`, `RRGGBB`, `r,g,b`, named colors; apply brightness; HSV helpers for effects. |
-| `profiles.py` | Read/write profile JSON and `state.json` atomically; list/save/load/delete. |
-| `effects.py` | Generate a 126-slot frame for a given time; run the foreground frame loop. |
-| `doctor.py` | Check device presence, permissions, ioctl, descriptor, packet size, udev rule. |
+| `controller.py` | Find IF1, parse/validate the descriptor, read the config/palette/frame mailboxes, and build/validate/send the captured report-0x06 write shapes. |
+| `layout.py` | Static main-key map and aliases for slots `0–101`, plus the duplicate/dead slot table. |
+| `colors.py` | Parse `#RRGGBB`, `RRGGBB`, `r,g,b`, named colors; scale brightness for `set`. |
+| `profiles.py` | Read/write lighting profiles atomically; list/show/delete. |
+| `state.py` | Store the last one-shot frame and timestamped config/palette backups atomically. |
 | `cli.py` | Parse commands, route to modules, consistent errors/exit codes. |
 
 ### Data flow
@@ -108,20 +115,27 @@ keyboard_RGB_controller/
 ```text
 CLI command
    │
-   ├─ colors.parse() ──► per-key colors
+   ├─ colors.parse() ──► per-key colours
    ├─ layout.lookup() ─► slot indices
    │
    ▼
-controller.build_frame(colors) ──► 382-byte packet
+controller.build_color_packet() ──► 1032-byte report-0x06 frame
    │
    ▼
-fcntl.ioctl(fd, HIDIOCSFEATURE(382), packet)
+fcntl.ioctl(fd, HIDIOCSFEATURE(1032), packet)
    │
    ▼
 /dev/hidrawN (IF1)
+
+Config and palette writes use the same transport with the captured
+`06 03 c6 00 40` / `06 08 c8 00 40` shapes.
 ```
 
 ## 4. Protocol implementation
+
+The original report-0x08 hypothesis was disproven on hardware. The current,
+verified protocol is documented in [PROTOCOL.md](PROTOCOL.md); this section
+summarizes what the code implements.
 
 ### 4.1 Constants
 
@@ -130,9 +144,13 @@ VENDOR_ID = 0x258A
 PRODUCT_ID = 0x0049
 CONTROL_INTERFACE = "01"
 HID_ID_TOKEN = "HID_ID=0003:0000258A:00000049"
-PACKET_HEADER = bytes([0x08, 0x0A, 0x7A, 0x01])
+ALLOWED_FEATURE_REPORTS = {0x05: 5, 0x06: 1031}
 NUM_SLOTS = 126
-PACKET_LENGTH = 382
+COLOR_REPORT_ID = 0x06
+COLOR_PACKET_HEADER = bytes.fromhex("06 09 cc 00 40 00 00 00")
+COLOR_PLANE_BASES = (8, 134, 260)   # R, G, B
+CONFIG_WRITE_HEADER = bytes.fromhex("06 03 c6 00 40 00 00 00")
+PALETTE_WRITE_HEADER = bytes.fromhex("06 08 c8 00 40 00 00 00")
 ```
 
 ### 4.2 Discovery
@@ -149,34 +167,44 @@ def find_device() -> str:
 ```
 
 `interface_number()` walks up from `realpath(sysfs/device)` looking for
-`bInterfaceNumber`, up to ~6 levels.
+`bInterfaceNumber`, up to ~6 levels. Discovery is checked against the captured
+IF1 descriptor hash before any write.
 
-### 4.3 Packet builder
+### 4.3 Frame codecs
 
 ```python
-def build_frame(colors: dict[int, tuple[int, int, int]]) -> bytes:
-    packet = bytearray(PACKET_HEADER)
+def build_color_packet(colors):
+    packet = bytearray(COLOR_PACKET_HEADER)
     for slot in range(NUM_SLOTS):
         r, g, b = colors.get(slot, (0, 0, 0))
         packet.extend((r & 0xFF, g & 0xFF, b & 0xFF))
-    assert len(packet) == PACKET_LENGTH
+    # ... pad to the captured 1032-byte template ...
     return bytes(packet)
+
+def build_config_packet(config): ...          # 03 c6, 136 config bytes
+def build_effect_palette_packet(palette): ... # 08 c8, 441 palette bytes
 ```
+
+`validate_color_packet()`, `validate_config()` and
+`validate_effect_palette()` check the exact captured header, length and
+trailer before a write is attempted.
 
 ### 4.4 Send
 
 ```python
-def send_led_frame(fd: int, packet: bytes) -> None:
-    if len(packet) != PACKET_LENGTH or packet[:4] != PACKET_HEADER:
-        raise ValueError("invalid LED frame")
-    fcntl.ioctl(fd, hidiocsfeature(PACKET_LENGTH), packet)
+def write_feature(fd: int, packet) -> int:
+    # HIDIOCSFEATURE(len(packet)) after validation
+    return fcntl.ioctl(fd, hidiocsfeature(len(packet)), packet)
 ```
 
 ### 4.5 Safety boundary
 
-- `controller.py` exposes **no** generic `send_feature()`.
-- Report `0x06` is not referenced anywhere in the codebase.
-- The packet length and header are validated before every send.
+- The only writable report is report `0x06`.
+- Reads use report `0x05` mailbox commands or report `0x06` responses.
+- Only the captured `09 cc`, `03 c6`, `08 c8` and custom-frame shapes can be
+  sent; there is no generic "send arbitrary feature report" entry point.
+- Config/palette writes are preceded by a full read-back backup unless
+  `--no-backup` is given.
 - Errors are raised, never silently retried with a different report ID.
 - No driver detach, no `libusb`, no root daemon.
 
@@ -186,57 +214,55 @@ def send_led_frame(fd: int, packet: bytes) -> None:
 
 | Command | Purpose |
 |---|---|
-| `k622rgb list` | Print the main-key LED map and duplicate/dead slots |
-| `k622rgb info` | Device path, interface, permissions, packet size |
-| `k622rgb doctor` | Diagnose device/udev/ioctl problems |
-| `k622rgb set <color>` | Set all keys |
-| `k622rgb off` | All LEDs off |
-| `k622rgb key <key> <color>` | Set one key |
-| `k622rgb keys K=C ...` | Set multiple keys |
-| `k622rgb fill <color> [--except ...]` | Fill all except listed keys |
-| `k622rgb brightness <0-100>` | Software brightness scaling |
-| `k622rgb profile save <name>` | Save current state |
-| `k622rgb profile load <name>` | Apply a profile |
-| `k622rgb profile list` | List profiles |
-| `k622rgb profile show <name>` | Print profile JSON |
-| `k622rgb profile delete <name>` | Delete a profile |
-| `k622rgb effect static --color <c>` | Static color |
-| `k622rgb effect breathing --color <c> --speed <n>` | Breathing |
-| `k622rgb effect rainbow --speed <n>` | Rainbow |
-| `k622rgb effect wave --speed <n>` | Spatial wave |
-| `k622rgb probe ...` | Phase 0 hardware probe (kept as a diagnostic command) |
-| `k622rgb install-udev` | Print the udev rule and install commands |
+| `k622rgb info` | Show the HID report descriptor and declared reports |
+| `k622rgb dump --report {5,6}` | Read a declared feature report (read-only) |
+| `k622rgb check` | Verify discovery, permissions and the descriptor hash |
+| `k622rgb list [--all]` | Print the main-key LED map and duplicate/dead slots |
+| `k622rgb set [KEY=COLOR ...]` | Write a per-key frame (`--all`, `--off`, `--reset`, `--from-device`, `--no-activate`, `--brightness 0-9`, `--dry-run`) |
+| `k622rgb off` | Select the built-in OFF mode |
+| `k622rgb mode list/show/set` | Inspect or select the 20 built-in effects / Self-define / OFF, with brightness, speed, colour or random |
+| `k622rgb color list/show/set` | Inspect or edit the seven-colour effect palette |
+| `k622rgb config dump/show/restore` | Back up, inspect or restore the lighting config, palette and frames |
+| `k622rgb profile list/show/save/load/delete` | Manage local lighting profiles |
 
 ### 5.2 Global flags
 
 | Flag | Meaning |
 |---|---|
 | `--device /dev/hidrawN` | Override auto-detection |
-| `--dry-run` | Print packet hex; do not open the device |
-| `--verbose` | Debug logging |
-| `--json` | Machine-readable output for scripts |
-| `--no-color` | Disable ANSI color in output |
+| `--dry-run` | Describe what would happen; do not open the device |
+| `--verbose` | Print discovery details |
+| `--version` | Print the tool version |
+
+Some commands add their own flags (`set --state/--no-state/--hex`,
+`config dump --out`, `profile ... --dir`, `--no-backup`, etc.).
 
 ### 5.3 Examples
 
 ```bash
-k622rgb set red
-k622rgb set '#00aaff' --brightness 60
-k622rgb key W red
-k622rgb keys W=#ff0000,E=#00ff00,Space=#0000ff
-k622rgb fill blue --except W,A,S,D
-k622rgb off
-k622rgb brightness 40
+./bin/k622rgb info
+./bin/k622rgb check
+./bin/k622rgb list
 
-k622rgb profile save gaming
-k622rgb profile load gaming
-k622rgb profile list
+./bin/k622rgb set Esc=red
+./bin/k622rgb set --all 0000ff --brightness 6
+./bin/k622rgb set --from-device 1=00ff00
+./bin/k622rgb set --off
+./bin/k622rgb off
 
-k622rgb effect breathing --color cyan --speed 1.2
-k622rgb effect rainbow --speed 0.8
-k622rgb effect wave --speed 1.0
+./bin/k622rgb mode list
+./bin/k622rgb mode set breathing --color 0000ff --brightness 7 --speed 1
+./bin/k622rgb mode set rainbow --speed 3 --brightness 9
+./bin/k622rgb mode set per-key
+./bin/k622rgb color set ripples-shining 2 00ffff
 
-k622rgb doctor
+./bin/k622rgb config show
+./bin/k622rgb config dump
+./bin/k622rgb config restore ./backup
+
+./bin/k622rgb profile save gaming
+./bin/k622rgb profile load gaming
+./bin/k622rgb profile list
 ```
 
 ### 5.4 Exit codes
@@ -247,123 +273,93 @@ k622rgb doctor
 | `1` | Device/protocol/runtime error |
 | `2` | Usage error (bad arguments, unknown key, invalid color) |
 
-## 6. Layout and calibration
-
-### 6.1 Static map
+## 6. Layout
 
 `layout.py` contains the 87-key map for slots `0–101` from
-[KEYMAP.md](KEYMAP.md). Dead slots are explicit. Key lookup is case-insensitive
-and accepts aliases.
+[KEYMAP.md](KEYMAP.md), the 15 duplicate/dead main-key positions, and
+case-insensitive aliases. The numeric `slot:N` escape remains available for
+diagnostics.
 
-### 6.2 Calibrated extras
-
-`layout.py` loads `~/.config/k622rgb/layout.json` if present:
-
-```json
-{
-  "version": 1,
-  "slots": {
-    "102": "G1",
-    "103": "G2",
-    "104": "G3",
-    "105": "G4",
-    "106": "MR",
-    "107": "RGB",
-    "108": "Prev",
-    "109": "Play",
-    "110": "Next",
-    "111": "Mute"
-  }
-}
-```
-
-- Missing slot → uncalibrated (treated as dead for rendering).
-- `""` → explicitly dead.
-- The file is optional; without it, only `0–101` are addressable.
-
-### 6.3 Interactive calibration
-
-For each slot in `102–125`:
-
-1. Set all slots to black.
-2. Set the target slot to bright white.
-3. Ask: `Which key lit up?`
-4. Accept `G1`, `G2`, `G3`, `G4`, `MR`, `RGB`, `Prev`, `Play`, `Next`, `Mute`,
-   `Volume`, `none`, `skip`, `undo`, `quit`.
-5. Save progress after each answer (so a quit does not lose work).
-6. At the end, optionally run `--verify` to light each mapped key in sequence.
-
-Edge cases:
-
-- A slot may light more than one key; allow a comma-separated answer.
-- A key may light from more than one slot; allow the user to note it.
-- `none` marks the slot dead.
-- `undo` re-prompts the previous slot.
-- `quit` saves and exits.
+Slots `102–125` are duplicate/dead matrix positions, not extra RGB keys.
+Hardware testing showed the G1–G4/MR/RGB/media keys and volume roller have no
+individually addressable LEDs. The interactive calibration command,
+`layout.json` loading and extra-key aliases were therefore removed; `list`
+reports the dead/duplicate slots instead.
 
 ## 7. Profiles and state
 
 ### 7.1 Paths
 
-Respect `XDG_CONFIG_HOME`; default to `~/.config/k622rgb/`.
+Profiles respect `XDG_CONFIG_HOME`; the default is
+`~/.config/k622rgb/profiles/` (override with `K622RGB_PROFILE_DIR` or
+`profile ... --dir`). The last-frame record and config backups use the XDG
+state directory, `~/.local/state/k622rgb/` (override with
+`K622RGB_STATE_DIR` / `K622RGB_STATE_FILE`).
 
 ```text
 ~/.config/k622rgb/
-├── config.json          # optional defaults (brightness, fps)
-├── layout.json          # calibrated extra slots
-├── state.json           # last one-shot frame
 └── profiles/
     ├── gaming.json
     └── rainbow.json
+
+~/.local/state/k622rgb/
+├── last-frame.bin
+└── backups/
+    └── 20261101-132700/
+        ├── meta.json
+        ├── config.bin
+        ├── palette.bin
+        └── custom-frame-1.bin
 ```
 
 ### 7.2 Profile schema
+
+A profile stores the exact device lighting state, not key names:
 
 ```json
 {
   "version": 1,
   "name": "gaming",
-  "brightness": 100,
-  "effect": {"type": "static"},
-  "colors": {
-    "W": [255, 0, 0],
-    "A": [0, 255, 0],
-    "Space": [0, 0, 255]
-  }
+  "created": "2026-11-01T13:27:00Z",
+  "config": "<136 bytes, hex>",
+  "palette": "<441 bytes, hex>",
+  "custom_frame": "<1024 bytes, hex, optional>"
 }
 ```
 
-- Colors are keyed by canonical key name, not slot, so profiles survive layout
-  changes.
-- `brightness` is 0–100.
-- `effect` is optional; profiles may describe a static frame or an effect.
-- Writes are atomic (temp file + `os.replace`).
+- The config block carries the mode, brightness/speed and per-mode parameters.
+- The palette is the 21 × 21-byte effect palette.
+- `custom_frame` is optional (`profile save --no-frame`).
+- Writes are atomic (temp file + `os.replace`), and loading validates every
+  blob length and version.
 
 ### 7.3 State
 
-`state.json` stores the last one-shot frame (pre-brightness colors), so:
-
-- `brightness` can re-render the current colors.
-- `profile save` can capture the current state.
-- Effects do not write every frame; they write at start/stop if needed.
+`last-frame.bin` stores the last `09 cc` frame written by `set`, so successive
+calls are additive. `set --from-device` instead reads the custom frame back
+from the keyboard, `--no-state` bypasses the local record, and `--reset`
+starts from black. Config/palette backups are timestamped directories written
+before every write unless `--no-backup` is given.
 
 ## 8. Effects
 
-| Effect | Behavior |
-|---|---|
-| `static` | One color for all keys, or per-key overrides |
-| `breathing` | Single color, sinusoidal brightness |
-| `rainbow` | Whole-board hue rotation |
-| `wave` | Spatial hue gradient moving across the layout |
+The K622 runs its effects in firmware; the host does not animate frames. The
+CLI selects a mode and writes its parameters through the config mailbox.
 
-- Default 30 FPS; `--fps` configurable.
-- `--speed` scales animation time.
-- `--brightness` scales output.
-- Each tick builds a full 382-byte frame and sends it.
-- `Ctrl-C` behavior: `--on-exit restore|off|keep` (default `restore`).
-- Effects run in the foreground. When the terminal closes, the effect stops and
-  the board keeps the last frame.
-- No reactive keypress effects in this scope.
+| Concept | Support |
+|---|---|
+| Built-in effects | 20 modes (see [RGB_MODES.md](RGB_MODES.md)) |
+| Per-key | Self-define mode plus `set` frames |
+| Off | Mode OFF (`k622rgb off`) or `set --off` |
+| Brightness | `mode set --brightness 0-9` (onboard); `set --brightness 0-9` (software scaling) |
+| Speed | `mode set --speed 1-4` (some modes ignore it) |
+| Colour | `mode set --color`, `--color-index 0-6`, or `--random` |
+| Palette | `color list/show/set` |
+
+Per-key `09 cc` frames are ignored while an effect is active, so `set` switches
+to Self-define by default. `profile save/load` captures and restores the whole
+lighting configuration. Host-side breathing/rainbow/wave animation, `--fps`
+and reactive effects are not implemented.
 
 ## 9. Permissions and udev
 
@@ -402,14 +398,21 @@ case is another local user changing LED colors. A dedicated group with
 For a quick test:
 
 ```bash
-sudo ./bin/k622rgb probe ...
+sudo ./bin/k622rgb check
 # or temporarily:
 sudo chmod 666 /dev/hidraw6   # resets on replug
 ```
 
-`doctor` reports which case applies.
+`check` reports which case applies.
 
 ## 10. Phases
+
+> **Historical record.** The phases below document the original plan. Phase 0
+> and Phase 1 were implemented against report `0x06` after report `0x08` was
+> disproven. Phase 2 (calibration) was removed because the K622 has no extra
+> RGB keys. Phase 3 was implemented with the keyboard's built-in effects
+> (`mode`/`color`/`config`) instead of host-side animation. Use the current
+> command reference in section 5 and [README.md](../README.md).
 
 ### Phase 0 — Hardware protocol probe (gate)
 
@@ -461,59 +464,49 @@ of the official Windows software or further static analysis.
 - Permission errors produce actionable messages.
 - Unit tests pass with `python3 -m unittest discover`.
 
-### Phase 2 — Calibration
+### Phase 2 — Calibration (removed)
 
-**Deliverables:**
+Not applicable to the K622: the G/MR/media keys have no addressable RGB LEDs
+and slots `102–125` are duplicate/dead. The command, `layout.json` support and
+extra-key aliases were removed.
 
-- `calibrate.py` with interactive slot discovery.
-- `layout.json` loading/merging.
-- `calibrate --verify`.
-- Extra-key aliases (`G1`–`G4`, `MR`, `RGB`, `Prev`, `Play`, `Next`, `Mute`,
-  `Volume`).
-- Tests for layout merge and alias lookup.
+### Phase 3 — Profiles and effects (implemented with onboard effects)
 
-**Exit criteria:**
-
-- Every addressable extra key is mapped.
-- Dead extra slots are recorded.
-- `k622rgb key G1 red` works if G1 is addressable.
-- `list` shows calibration status.
-
-### Phase 3 — Profiles and effects
-
-**Deliverables:**
+**Deliverables (as implemented):**
 
 - `profiles.py` with atomic JSON writes.
-- `state.json` tracking.
-- `effect static|breathing|rainbow|wave`.
-- `--fps`, `--speed`, `--brightness`, `--on-exit`.
-- `Ctrl-C` handling.
-- Tests for profile round-trip, state, and deterministic effect frames.
+- `state.py` last-frame tracking and timestamped config/palette backups.
+- `mode list/show/set` for the 20 built-in effects, Self-define and OFF.
+- `color list/show/set` for the effect palette.
+- `config dump/show/restore` as the backup/recovery path.
+- Brightness `0–9`, speed `1–4`, palette colour or random per mode.
+- Tests for protocol codecs, profile round-trip, state and CLI parsing.
 
-**Exit criteria:**
+**Exit criteria (as implemented):**
 
 - `profile save/load/list/show/delete` round-trips.
-- Effects run smoothly at 30 FPS.
-- Typing remains unaffected.
-- `Ctrl-C` restores or turns off as requested.
+- All 20 effects, Self-define and OFF work on hardware.
+- Brightness/speed/colour/random work on hardware.
+- Config and palette survive a power cycle.
+- `config restore` recovers a previous state.
 
 ### Phase 4 — Polish and acceptance
 
 **Deliverables:**
 
-- Full `README.md` (install, udev, usage, key names, calibration, profiles,
-  effects, troubleshooting, limitations).
-- `docs/PROTOCOL.md` updated with Phase 0 results.
-- `docs/KEYMAP.md` updated with calibrated extra slots.
-- `doctor` checks: device, IF1, permissions, ioctl, descriptor, packet size,
-  udev rule.
-- Optional shell completion.
+- Root `README.md` (install, udev, usage, key names, profiles, effects,
+  troubleshooting, limitations) plus the detailed `docs/` set.
+- `docs/PROTOCOL.md`, `docs/KEYMAP.md` and `docs/RGB_MODES.md` updated with
+  hardware results.
+- `check` diagnostics: device, IF1, permissions, ioctl, descriptor and packet
+  size. The udev rule is shipped in `udev/`.
 - MIT `LICENSE`, `.gitignore`.
 - Manual hardware test checklist.
 
 **Exit criteria:**
 
-- Fresh clone + udev rule + `./bin/k622rgb set red` works from the README alone.
+- Fresh clone + udev rule + `./bin/k622rgb set Esc=red` works from the README
+  alone.
 - All acceptance criteria below are met.
 
 ## 11. Testing
@@ -522,13 +515,14 @@ of the official Windows software or further static analysis.
 
 | Test file | Coverage |
 |---|---|
-| `test_packet.py` | 382-byte length, header, RGB order, zero fill, slot offsets |
-| `test_layout.py` | 87 keys, dead slots, aliases, numeric slots |
-| `test_colors.py` | Hex, named, `r,g,b`, invalid input, brightness scaling |
-| `test_profiles.py` | Round-trip, atomic write, invalid JSON, missing fields |
-| `test_effects.py` | Deterministic frames for a given time; speed/brightness |
-| `test_controller.py` | Discovery with fake sysfs; ioctl called with 382; errors |
-| `test_cli.py` | Command parsing, exit codes, `--dry-run` |
+| `test_packet.py` | Captured template, 1032-byte length, header, RGB planes, zero fill, slot offsets, validation |
+| `test_layout.py` | 87 keys, dead/duplicate slots, aliases, numeric slots, rejected extra-key names |
+| `test_colors.py` | Hex, named, `r,g,b`, invalid input, formatting |
+| `test_profiles.py` | Round-trip, atomic write, invalid JSON, missing/invalid fields |
+| `test_modes.py` | Mode table, config parse/build/validate, palette, factory-reset layout, CLI mode paths |
+| `test_controller.py` | Discovery with fake sysfs, descriptor checks, ioctl numbers, read/write feature shapes, errors |
+| `test_descriptor.py` | Captured descriptor fixture, parser, declared report sizes |
+| `test_cli.py` | Command parsing, exit codes, `set` frames, config/profile commands, `--dry-run` |
 
 Run:
 
@@ -538,50 +532,56 @@ python3 -m unittest discover -s tests -v
 
 ### 11.2 Hardware tests (manual)
 
-- `doctor` on a fresh session.
-- `set red`, `set '#00aaff'`, `off`.
+- `check` on a fresh session.
+- `set Esc=red`, `set --all 00aaff`, `set --off`, `off`.
 - Per-key sweep: every main key individually.
 - Dead-slot check: slots `6, 23, ...` produce no light.
-- Calibration and `--verify`.
-- Effects for 60 seconds each; check flicker and typing.
-- Replug: discovery still works.
+- `list` and `slot:N` diagnostics.
+- All 20 effects with brightness/speed/colour/random; check flicker and typing.
+- `config dump` / `config restore` round-trip.
+- `profile save` / `profile load` round-trip.
+- Replug and power cycle: discovery and persisted config still work.
 - Permission-denied path: unplug rule or use a non-udev session.
 - Concurrent access: second instance reports a clear error.
 
 ### 11.3 Fuzzing / edge cases
 
-- Invalid key names, empty `keys` list, duplicate keys.
-- Colors with missing `#`, 3-digit hex (decide: reject or expand), out-of-range
-  `r,g,b`.
-- Device disconnect mid-effect: stop with a clear error, no traceback.
-- Short/long packet in `send_led_frame()`: rejected before ioctl.
+- Invalid key names, empty assignment list, duplicate keys.
+- Colors with missing `#`, 3-digit hex (rejected), out-of-range `r,g,b`.
+- Device disconnect mid-write: stop with a clear error, no traceback.
+- Short/long or malformed packets: rejected before ioctl.
+- Unknown descriptor hash: writes refused before the device is opened.
 
 ## 12. Risks and mitigations
 
 | Risk | Mitigation |
 |---|---|
-| Report `0x08` rejected by K622 | Phase 0 gate; stop and investigate, never try `0x06` |
-| Extra keys not addressable | Document limitation; main 87 keys still work |
-| Built-in effect overrides frame | Phase 0 test; investigate a mode-select command if needed |
-| udev/uaccess not applied | `doctor` detects; fallback `MODE="0666"` |
-| Flicker at 30 FPS | Tune FPS; skip unchanged frames |
-| Lighting resets on power cycle | Document; profiles applied on demand |
+| Unknown descriptor or firmware revision | Descriptor hash check; writes refused before opening the device |
+| Malformed/unsupported write shape | Only captured `09 cc`, `03 c6`, `08 c8` and custom-frame packets; validated first |
+| Accidental keymap/macro write | Those report shapes are never built or sent |
+| Extra keys not addressable | Documented limitation; the 87 main keys still work |
+| Built-in effect overrides per-key frame | `set` switches to Self-define by default; `--no-activate` leaves the mode alone |
+| udev/uaccess not applied | `check` reports it; fallback `MODE="0666"` documented |
+| Bad config write | Full read-back backup before every write; `config restore` |
 | Multiple writers | Detect busy device; clear error |
-| Shared K618/K622 config | Calibration resolves actual extras; don't trust G5 blindly |
 | Label typos | Normalize `SrcLock` → `ScrLk`; keep aliases |
 
 ## 13. Acceptance criteria
 
-- Fresh clone + udev rule + `./bin/k622rgb set red` works from the README alone.
+- Fresh clone + udev rule + `./bin/k622rgb set Esc=red` works from the README
+  alone.
 - All 87 main keys are individually addressable.
-- On the K622, the 87 main keys are the RGB set; the G/MR/media keys have no addressable RGB LEDs.
-- Effects run at 30 FPS without disturbing typing.
-- `doctor` gives a clear fix for every common failure.
-- No code path can send report `0x06` or any firmware command.
+- On the K622, the 87 main keys are the RGB set; the G/MR/media keys have no
+  addressable RGB LEDs.
+- All 20 built-in effects, Self-define and OFF work, with brightness/speed/
+  colour/random, without disturbing typing.
+- `check` gives a clear fix for every common discovery/permission failure.
+- No code path can send a firmware, bootloader, keymap or macro write.
 - Profiles round-trip and survive a restart.
-- Lighting is documented as volatile; no onboard writes.
+- Config/palette persistence across a power cycle is documented; only the
+  captured config/palette/frame writes are used.
 - Unit tests pass without hardware.
-- `--dry-run` produces a valid packet for every command that writes LEDs.
+- `--dry-run` produces a valid frame for every command that writes LEDs.
 
 ## 14. Future work
 
@@ -592,15 +592,15 @@ Out of scope for this plan, but natural next steps:
 - Ambient/system-monitor modes (CPU, audio VU).
 - GUI/tray.
 - MQTT/Home Assistant integration.
-- Onboard profile persistence, if Phase 0 proves it safe.
+- Investigating the `GaoshouKey*` game-mode highlighting, if it turns out to be
+  an RGB feature on this model.
+- Keymap/macro editing, if a safe and captured protocol appears.
 - Wireless (Bluetooth/2.4 GHz) and ISO variants.
 - Plugin system for effects.
 
-## 15. First steps
+## 15. Getting started
 
-1. Create the package skeleton and `bin/k622rgb`.
-2. Implement `controller.py` (discovery, frame builder, ioctl).
-3. Implement `probe` and unit tests.
-4. Ask the user to install the udev rule (or run with sudo) and execute the
-   Phase 0 probe.
-5. Record the results, update `PROTOCOL.md`, and proceed to Phase 1.
+1. Install the udev rule from `udev/60-k622rgb.rules` and replug the keyboard.
+2. Run `./bin/k622rgb check` and `./bin/k622rgb info`.
+3. Run `./bin/k622rgb set Esc=red` or `./bin/k622rgb mode list`.
+4. Read [PROTOCOL.md](PROTOCOL.md) before extending the write paths.

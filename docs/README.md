@@ -27,8 +27,8 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 - Extra keys: **not RGB**. G1-G4, MR, the RGB toggle and the media buttons
   stayed dark in both Fixed_on and Self-define modes. `Cfg.ini` has no `[KEY]`
   entries for them; slots `102-125` are duplicate/dead positions.
-- Calibration: retained for sibling Sinowealth variants; **not needed on the
-  K622**. The RGB set is the 87 main keys.
+- Calibration: **removed** from the CLI. The K622's G1-G4/MR/RGB/media keys
+  are not RGB; the RGB set is the 87 main keys.
 - Remaining work: optional game-mode/dynamic effects, or a daemon.
 - Commits: hardware gate passed.
 
