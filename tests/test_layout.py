@@ -3,26 +3,94 @@ import unittest
 from k622rgb import controller, layout
 
 
-class LayoutTestCase(unittest.TestCase):
-    """Base class for the main-key map tests."""
-
-
-class SlotTableTests(LayoutTestCase):
+class SlotTableTests(unittest.TestCase):
     def test_has_eighty_seven_main_keys(self):
         self.assertEqual(len(layout.SLOT_NAMES), 87)
 
-    def test_named_and_dead_slots_cover_the_main_block(self):
+    def test_slots_are_partitioned(self):
+        groups = {
+            "keys": set(layout.SLOT_NAMES),
+            "aliases": set(layout.ALIAS_SLOTS),
+            "zones": set(layout.ZONE_NAMES),
+            "dead": set(layout.DEAD_SLOTS),
+        }
         self.assertEqual(
-            set(layout.SLOT_NAMES) | set(layout.DEAD_SLOTS),
-            set(range(102)),
+            set().union(*groups.values()),
+            set(range(controller.NUM_SLOTS)),
         )
-        self.assertFalse(set(layout.SLOT_NAMES) & set(layout.DEAD_SLOTS))
+        for left, left_slots in groups.items():
+            for right, right_slots in groups.items():
+                if left >= right:
+                    continue
+                self.assertFalse(
+                    left_slots & right_slots,
+                    "%s and %s overlap" % (left, right),
+                )
 
-    def test_dead_slots_match_the_captured_map(self):
+    def test_dead_slots_match_the_observed_map(self):
         self.assertEqual(
             set(layout.DEAD_SLOTS),
-            {6, 23, 29, 41, 47, 70, 71, 75, 76, 77, 87, 88, 93, 99, 100},
+            {
+                1,
+                17,
+                18,
+                19,
+                20,
+                38,
+                39,
+                40,
+                41,
+                59,
+                60,
+                61,
+                62,
+                75,
+                80,
+                81,
+                82,
+                83,
+                85,
+                96,
+                98,
+                100,
+                101,
+                102,
+                103,
+                104,
+                108,
+                109,
+                111,
+                112,
+                116,
+                117,
+                122,
+                123,
+                124,
+                125,
+            },
         )
+
+    def test_zone_slots(self):
+        self.assertEqual(
+            layout.ZONE_NAMES,
+            {77: "LogoLeft", 78: "LogoCenter", 79: "LogoRight"},
+        )
+        for slot, name in layout.ZONE_NAMES.items():
+            with self.subTest(slot=slot, name=name):
+                self.assertEqual(layout.resolve_key(name), slot)
+                self.assertEqual(layout.canonical_name(slot), name)
+                self.assertEqual(layout.slot_kind(slot), "zone")
+
+    def test_no_alias_slots(self):
+        self.assertEqual(layout.ALIAS_SLOTS, {})
+        self.assertEqual(layout.resolve_key("/"), 95)
+        self.assertEqual(layout.canonical_name(95), "/")
+        self.assertEqual(layout.slot_kind(95), "key")
+
+    def test_no_unlit_keys(self):
+        self.assertEqual(layout.UNLIT, frozenset())
+        self.assertEqual(layout.resolve_key("X"), 87)
+        self.assertEqual(layout.canonical_name(87), "X")
 
     def test_slot_count_matches_controller(self):
         self.assertEqual(controller.NUM_SLOTS, 126)
@@ -31,33 +99,55 @@ class SlotTableTests(LayoutTestCase):
         for slot, name in layout.SLOT_NAMES.items():
             with self.subTest(slot=slot, name=name):
                 self.assertEqual(layout.resolve_key(name), slot)
+        for slot, name in layout.ZONE_NAMES.items():
+            with self.subTest(slot=slot, name=name):
+                self.assertEqual(layout.resolve_key(name), slot)
 
     def test_every_alias_resolves_to_its_slot(self):
-        for alias, canonical in layout.ALIASES.items():
+        aliases = list(layout.ALIASES.items()) + list(
+            layout.ZONE_ALIASES.items()
+        )
+        for alias, canonical in aliases:
             with self.subTest(alias=alias):
-                expected = layout.resolve_key(canonical)
-                self.assertEqual(layout.resolve_key(alias), expected)
+                self.assertEqual(
+                    layout.resolve_key(alias),
+                    layout.resolve_key(canonical),
+                )
 
 
-class ResolveKeyTests(LayoutTestCase):
+class ResolveKeyTests(unittest.TestCase):
     def test_known_keys(self):
         cases = {
             "Esc": 0,
-            "`": 1,
-            "Tab": 2,
-            "Caps": 3,
-            "1": 7,
-            "Q": 8,
-            "A": 9,
-            "Space": 35,
-            "F1": 12,
-            "F12": 78,
-            "Bksp": 79,
-            "Enter": 81,
-            "PrtSc": 84,
-            "ScrLk": 90,
-            "Up": 94,
-            "Right": 101,
+            "`": 21,
+            "Tab": 42,
+            "Caps": 63,
+            "1": 22,
+            "Q": 43,
+            "A": 64,
+            "Space": 110,
+            "F1": 2,
+            "F12": 13,
+            "Bksp": 34,
+            "Enter": 76,
+            "PrtSc": 14,
+            "ScrLk": 15,
+            "Up": 99,
+            "Right": 121,
+            "W": 44,
+            "Z": 86,
+            "X": 87,
+            "C": 88,
+            "V": 89,
+            "B": 90,
+            "N": 91,
+            "M": 92,
+            ",": 93,
+            ".": 94,
+            "/": 95,
+            "LogoLeft": 77,
+            "LogoCenter": 78,
+            "LogoRight": 79,
         }
         for name, slot in cases.items():
             with self.subTest(name=name):
@@ -65,50 +155,57 @@ class ResolveKeyTests(LayoutTestCase):
 
     def test_lookup_is_case_insensitive(self):
         self.assertEqual(layout.resolve_key("esc"), 0)
-        self.assertEqual(layout.resolve_key("q"), 8)
-        self.assertEqual(layout.resolve_key("ARROWRIGHT"), 101)
+        self.assertEqual(layout.resolve_key("q"), 43)
+        self.assertEqual(layout.resolve_key("ARROWRIGHT"), 121)
+        self.assertEqual(layout.resolve_key("logoleft"), 77)
 
     def test_official_and_common_aliases(self):
         cases = {
-            "Escape": 0,
-            "CapsLock": 3,
-            "LWin": 11,
-            "Super": 11,
-            "Meta": 11,
-            "App": 65,
-            "Application": 65,
-            "Backspace": 79,
-            "Back": 79,
-            "Insert": 85,
-            "Delete": 86,
-            "SrcLock": 90,
-            "ScrollLock": 90,
-            "PrintScreen": 84,
-            "Return": 81,
-            "Spacebar": 35,
-            "Grave": 1,
-            "Backtick": 1,
-            "Semicolon": 63,
-            "Quote": 69,
-            "Apostrophe": 69,
-            "Comma": 52,
-            "Period": 58,
-            "Dot": 58,
-            "Slash": 64,
-            "Backslash": 80,
-            "LeftBracket": 68,
-            "RightBracket": 74,
-            "Minus": 67,
-            "Hyphen": 67,
-            "Equals": 73,
-            "ArrowUp": 94,
-            "ArrowDown": 95,
-            "ArrowLeft": 89,
-            "ArrowRight": 101,
+            "Escape": "Esc",
+            "CapsLock": "Caps",
+            "LWin": "Win",
+            "Super": "Win",
+            "Meta": "Win",
+            "App": "Menu",
+            "Application": "Menu",
+            "Backspace": "Bksp",
+            "Back": "Bksp",
+            "Insert": "Ins",
+            "Delete": "Del",
+            "SrcLock": "ScrLk",
+            "ScrollLock": "ScrLk",
+            "PrintScreen": "PrtSc",
+            "Return": "Enter",
+            "Spacebar": "Space",
+            "Grave": "`",
+            "Backtick": "`",
+            "Semicolon": ";",
+            "Quote": "'",
+            "Apostrophe": "'",
+            "Comma": ",",
+            "Period": ".",
+            "Dot": ".",
+            "Slash": "/",
+            "Backslash": "\\",
+            "LeftBracket": "[",
+            "RightBracket": "]",
+            "Minus": "-",
+            "Hyphen": "-",
+            "Equals": "=",
+            "ArrowUp": "Up",
+            "ArrowDown": "Down",
+            "ArrowLeft": "Left",
+            "ArrowRight": "Right",
+            "logo1": "LogoLeft",
+            "logo-center": "LogoCenter",
+            "logo3": "LogoRight",
         }
-        for name, slot in cases.items():
-            with self.subTest(name=name):
-                self.assertEqual(layout.resolve_key(name), slot)
+        for alias, canonical in cases.items():
+            with self.subTest(alias=alias):
+                self.assertEqual(
+                    layout.resolve_key(alias),
+                    layout.resolve_key(canonical),
+                )
 
     def test_numeric_slot_escape(self):
         self.assertEqual(layout.resolve_key("slot:0"), 0)
@@ -139,9 +236,21 @@ class ResolveKeyTests(LayoutTestCase):
 
     def test_canonical_name(self):
         self.assertEqual(layout.canonical_name(0), "Esc")
-        self.assertEqual(layout.canonical_name(101), "Right")
-        self.assertEqual(layout.canonical_name(6), "slot:6")
-        self.assertEqual(layout.canonical_name(102), "slot:102")
+        self.assertEqual(layout.canonical_name(121), "Right")
+        self.assertEqual(layout.canonical_name(1), "slot:1")
+        self.assertEqual(layout.canonical_name(77), "LogoLeft")
+        self.assertEqual(layout.canonical_name(87), "X")
+        self.assertEqual(layout.canonical_name(94), ".")
+        self.assertEqual(layout.canonical_name(95), "/")
+        self.assertEqual(layout.canonical_name(85), "slot:85")
+
+    def test_slot_kind(self):
+        self.assertEqual(layout.slot_kind(0), "key")
+        self.assertEqual(layout.slot_kind(77), "zone")
+        self.assertEqual(layout.slot_kind(87), "key")
+        self.assertEqual(layout.slot_kind(95), "key")
+        self.assertEqual(layout.slot_kind(85), "dead")
+        self.assertEqual(layout.slot_kind(1), "dead")
 
 
 if __name__ == "__main__":

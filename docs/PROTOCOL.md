@@ -243,8 +243,10 @@ This confirms:
 
 - the `09 cc` colour frame alone changes the lighting — the captured `09 d0`
   latch and `03 c6` config packets are **not** required for per-key colours;
-- the plane order and slot mapping (R `8`, G `134`, B `260`, `slot = col*6 +
-  row`) match the physical board;
+- the plane order (R `8`, G `134`, B `260`) matches the physical board; the
+  packet index is row-major (`packet = row*21 + col`), while the official
+  `Cfg.ini` LED slot is column-major (`cfg = col*6 + row`). The two numbering
+  systems were confused in the first version of this tool;
 - the local write-ahead record correctly makes successive `set` calls additive.
 
 One implementation detail found during verification: CPython's `fcntl` module
@@ -272,8 +274,9 @@ timeout.
 
 The 2026-11-01 usbmon capture confirms the 1032-byte buffer, the three
 126-byte planes, the `09 cc` colour header, and the repeated
-`09 cc` → `09 d0` → `03 c6` sequence. The remaining gates are hardware
-verification of the write. Slots `102–125` are duplicate/dead and have no extra RGB keys.
+`09 cc` → `09 d0` → `03 c6` sequence. The full 126-slot sweep later confirmed
+the packet order and found three addressable logo zones (packet slots 77–79);
+the remaining extra slots are dead.
 
 ## 8. Transport
 
@@ -337,20 +340,37 @@ for each /sys/class/hidraw/hidraw*:
 
 ## 10. Slot map
 
-| Range | Contents |
-|---|---|
-| `0–101` | 87 main keys (15 dead slots) |
-| `102–125` | Unknown; G/MR/media candidates and/or dead slots |
-
-Main-key dead slots:
+The packet index and the `Cfg.ini` LED slot are different:
 
 ```text
-6, 23, 29, 41, 47, 70, 71, 75, 76, 77, 87, 88, 93, 99, 100
+packet_slot = (cfg_slot % 6) * 21 + (cfg_slot // 6)
+cfg_slot    = (packet_slot % 21) * 6 + (packet_slot // 21)
 ```
 
-Full table: [KEYMAP.md](KEYMAP.md). The usbmon capture confirms the plane order
-inside report `0x06`: red at offset 8, green at 134, blue at 260, each 126
-bytes, with slot 0 first in each plane.
+| Packet range | Contents |
+|---|---|
+| `0–121` | 87 main keys, 3 logo zones and dead matrix positions |
+| `122–125` | Dead |
+
+Observed totals:
+
+| Group | Count |
+|---|---:|
+| Main keys | 87 |
+| Logo zones (`LogoLeft`, `LogoCenter`, `LogoRight`) | 3 |
+| Alias slots | 0 |
+| Dead slots | 36 |
+
+The main-key dead slots and the full table are in [KEYMAP.md](KEYMAP.md). The
+usbmon capture confirms the plane order inside report `0x06`: red at offset 8,
+green at 134, blue at 260, each 126 bytes, with packet slot 0 first in each
+plane.
+
+The first slot sweep accepted the expected values for C through `/` too
+quickly, so the bottom row was off by one. A key-name verify pass corrected it:
+packet slots 84–97 are LShift, dead, Z, X, C, V, B, N, M, comma, period,
+slash, dead, RShift. Slot 85 is dead; there are no unlit keys and no alias
+slots.
 
 ## 11. Safety rules
 
@@ -387,7 +407,7 @@ bytes, with slot 0 first in each plane.
 | Report `0x05` `GetFeature` | Confirmed: `05 01 02 00 00 00` |
 | Report `0x06` `GetFeature` without a mailbox command | Stalls (`EPIPE`) |
 | Official app read handshake (`83 C6` → report 6) | **Captured** (`06 83 c6 …`, 262 B) |
-| Main key slots `0–101` | Confirmed from `Cfg.ini` |
+| Packet-slot key map | **Confirmed by a full 126-slot sweep** (87 keys, 3 logo zones) |
 | 126-slot / 126-byte planes | **Confirmed on hardware** (R `8`, G `134`, B `260`) |
 | RGB order R,G,B | Confirmed from `Cfg.ini` |
 | Report-6 LED write packet | **Captured:** `09 cc` + 13 complete updates |
@@ -401,7 +421,7 @@ bytes, with slot 0 first in each plane.
 | 20 effects + Self-define + OFF | **Confirmed on hardware** |
 | Brightness 0–9 / speed 1–4 | **Confirmed on hardware** |
 | Official UI option set | **Confirmed under Wine 11** |
-| Extra slots `102–125` | **Duplicate/dead**; no extra RGB keys |
+| Extra slots | **Swept:** logo zones at 77–79; slot 95 is `/`; slot 85 dead; no G/MR/media RGB keys |
 | Persistence of config/palette | **Confirmed across a power cycle** |
 
 ## 13. Next steps

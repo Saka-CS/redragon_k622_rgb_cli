@@ -5,7 +5,7 @@ Read-only commands:
 * ``info``    — resolve the device and print its HID report descriptor.
 * ``dump``    — issue ``HIDIOCGFEATURE`` for report 0x05 or 0x06.
 * ``check``   — verify discovery, permissions and the descriptor hash.
-* ``list``    — show the main-key LED map and the duplicate/dead slots.
+* ``list``    — show the packet-slot map: keys, logo zones, aliases and dead slots.
 
 Lighting commands:
 
@@ -224,18 +224,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser(
         "list",
-        help="show the main-key LED map",
+        help="show the packet-slot LED map",
         description=(
-            "Print the 87 main-key LED map and the duplicate/dead slots. The "
-            "K622's G1-G4/MR/RGB/media keys are not RGB. Reads no feature "
-            "reports."
+            "Print the packet-slot LED map: main keys, the three addressable "
+            "logo zones, aliases and dead slots. The K622's G1-G4/MR/RGB/media "
+            "keys are not RGB. Reads no feature reports."
         ),
     )
     _add_global_flags(list_parser, suppress_defaults=True)
     list_parser.add_argument(
         "--all",
         action="store_true",
-        help="print every slot, including the duplicate/dead extra slots",
+        help="print every packet slot, including dead and alias positions",
     )
     list_parser.set_defaults(func=cmd_list)
 
@@ -842,14 +842,21 @@ def cmd_set(args: argparse.Namespace) -> int:
              len(packet)))
     print("base: %s" % base_label)
     for slot in sorted(changes):
+        name = layout.canonical_name(slot)
         print(
             "set: %s (slot %d) = %s"
             % (
-                layout.canonical_name(slot),
+                name,
                 slot,
                 colors.format_color(changes[slot]),
             )
         )
+        if name in layout.UNLIT:
+            print(
+                "warning: %s did not light during calibration on this unit "
+                "(slot %d); the LED may be defective." % (name, slot),
+                file=sys.stderr,
+            )
     if args.brightness is not None:
         print("brightness: software level %d/9" % args.brightness)
     print(
@@ -975,32 +982,48 @@ def cmd_set(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     print(
-        "main keys: %d mapped, %d dead slots (0-101)"
-        % (len(layout.SLOT_NAMES), len(layout.DEAD_SLOTS))
+        "keys: %d mapped, %d logo zones, %d aliases, %d dead slots "
+        "(packet slots 0-%d)"
+        % (
+            len(layout.SLOT_NAMES),
+            len(layout.ZONE_NAMES),
+            len(layout.ALIAS_SLOTS),
+            len(layout.DEAD_SLOTS),
+            controller.NUM_SLOTS - 1,
+        )
     )
     print()
-    print("the K622 RGB set is the 87 main keys;")
+    print(
+        "packet slots are row-major 21-column indices; Cfg.ini uses a "
+        "different column-major numbering."
+    )
     print(
         "G1-G4, MR, the RGB toggle, Previous, Play/Pause, Next and Mute have "
         "no individually addressable RGB LEDs."
     )
     print(
-        "slots 102-125 and the 15 Cfg.ini gaps are duplicate/dead matrix "
-        "positions, not extra RGB keys."
+        "logo zones: %s"
+        % ", ".join(
+            "%s=%d" % (name, slot)
+            for slot, name in sorted(layout.ZONE_NAMES.items())
+        )
     )
+    if layout.UNLIT:
+        print(
+            "unlit during calibration: %s (mapped but did not light)"
+            % ", ".join(sorted(layout.UNLIT))
+        )
     if args.all:
         print()
-        print("main block:")
-        for slot in range(0, layout.EXTRA_SLOT_START):
-            name = layout.SLOT_NAMES.get(slot)
-            print(
-                "  %3d  %-12s %s"
-                % (slot, name or "-", "main" if name else "dead")
-            )
-        print()
-        print("extra block (duplicate/dead, not RGB):")
-        for slot in layout.EXTRA_SLOTS:
-            print("  %3d  duplicate/dead" % slot)
+        print("packet slots:")
+        for slot in range(controller.NUM_SLOTS):
+            kind = layout.slot_kind(slot)
+            name = layout.canonical_name(slot)
+            if kind == "dead":
+                name = "-"
+            elif kind == "key" and name in layout.UNLIT:
+                kind = "key (unlit)"
+            print("  %3d  %-12s %s" % (slot, name, kind))
     return EXIT_OK
 
 

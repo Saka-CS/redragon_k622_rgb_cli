@@ -261,6 +261,8 @@ k622rgb profile delete gaming
   by `k622rgb`.
 - The `84 d8` profile table contains keymaps/macros. It is dumped read-only
   but never written.
-- Extra LED slots `102–125` are duplicate/dead; there are no extra RGB keys to calibrate.
+- The full packet-slot sweep found three addressable logo zones (packet slots
+  77–79); slot 95 is the primary `/`, and the remaining extra slots are dead.
+  See [KEYMAP.md](KEYMAP.md).
 - Firmware update, bootloader, flash and macro/keymap writes remain out of
   scope.

@@ -6,8 +6,18 @@
 - **Host:** Linux, Python 3.14.8, Hyprland/Omarchy desktop
 - **Status:** per-key writes, built-in effects, brightness/speed, effect
   palette and config backup/restore are implemented and verified on the
-  physical K622. The extra G/MR/media keys are **not RGB**; slots 102-125 are
-  duplicate/dead. Only optional work remains.
+  physical K622. The extra G/MR/media keys are **not RGB**. Only optional work
+  remains.
+
+> **2026-11-01 correction — packet-slot sweep.** The `Cfg.ini` LED slot is not
+> the report-0x06 packet index. The packet is row-major
+> (`packet = row*21 + col`); `Cfg.ini` is column-major
+> (`cfg = col*6 + row`). The full 126-slot sweep plus a key-name verify pass
+> confirmed 87 keys, three addressable logo zones at packet slots 77–79, no
+> alias slots, and 36 dead slots. The corrected bottom row is
+> `84 LShift, 85 dead, 86 Z, 87 X, 88 C, 89 V, 90 B, 91 N, 92 M, 93 comma,
+> 94 period, 95 slash, 96 dead, 97 RShift`. See [KEYMAP.md](KEYMAP.md) and
+> [keymap-observed.json](keymap-observed.json).
 
 ## 1. Objective
 
@@ -272,8 +282,9 @@ Fields:
 | **LED slot** | **`45`** | **Index in the 126-slot LED packet** |
 | key index | `70` | Separate internal index (0–121), not the LED slot |
 
-The `[KEY]` section contains **87 entries**, using LED slots `0–101` with 15
-dead slots. The slot values match the reference KS82-B map exactly.
+The `[KEY]` section contains **87 entries**, using `Cfg.ini` LED slots
+`0–101` with 15 gaps. These are *Cfg.ini* slots, not report-0x06 packet slots;
+the packet index is the transpose described in [KEYMAP.md](KEYMAP.md).
 
 `[FN]` maps G1–G5 to `K88–K92` with macro IDs `16,17,18,19,24`:
 
@@ -372,9 +383,11 @@ The 611×252 layout image shows:
 ### 5.1 Main keys
 
 - 87 keys, US QWERTY, TKL, low-profile.
-- LED slots `0–101`.
-- 15 dead slots: `6, 23, 29, 41, 47, 70, 71, 75, 76, 77, 87, 88, 93, 99, 100`.
-- Full table in [KEYMAP.md](KEYMAP.md).
+- `Cfg.ini` LED slots `0–101` with 15 gaps.
+- Packet slots are the row-major transpose; the full observed map is in
+  [KEYMAP.md](KEYMAP.md).
+- 36 dead packet slots and 3 logo zones were found by the full sweep; there
+  are no alias slots.
 
 ### 5.2 Extra keys
 
@@ -393,9 +406,10 @@ These are **not** in `Cfg.ini`'s `[KEY]` section, and hardware testing on
 2026-11-01 showed they have **no individually addressable RGB LEDs**: G1–G4,
 MR, the RGB toggle, Previous, Play/Pause, Next and Mute stayed dark in both
 Fixed_on and Self-define modes while the main keys changed colour. The volume
-roller also has no addressable LED. Slots `102–125` are duplicate/dead matrix
-positions (for example slot 105 lights LCtrl, slot 6 lights F5), not the extra
-keys.
+roller also has no addressable LED. The full packet-slot sweep found three
+addressable logo zones at packet slots 77–79; the other extra slots are dead.
+Packet slot 105 lights LCtrl and slot 6 lights F5 because of the Cfg→packet
+transpose, not because `Cfg.ini` slots 105/6 are special.
 
 ### 5.3 G5 ambiguity
 
@@ -477,7 +491,7 @@ on the K622 produced the 5-second `ETIMEDOUT` that motivated this pivot.
 | Report `0x05` readable | **Confirmed** | Hardware: `05 01 02 00 00 00` |
 | Report `0x06` GET stalls | **Confirmed** | Hardware: `EPIPE` |
 | Official read handshake (`83 C6` → report 6) | **Confirmed by capture** | usbmon: `06 83 c6 …`, 262 B |
-| Main 87 keys on slots `0–101` | **Confirmed** | Official `Cfg.ini` + reference map |
+| Packet-slot key map | **Confirmed** | Full sweep + verify: 87 keys, 3 logo zones, 0 aliases, 36 dead |
 | 126-slot / 126-byte planes | **Confirmed by capture** | R `8`, G `134`, B `260` |
 | RGB channel order R,G,B | **Confirmed** | `Cfg.ini` `RGBIndex=0,1,2` |
 | Report-6 lighting write packet | **Captured** | `09 cc` + 13 complete updates |
@@ -492,7 +506,7 @@ on the K622 produced the 5-second `ETIMEDOUT` that motivated this pivot.
 | Direction control | **Not present / not exposed** | Manual: `Fn+←/→` = speed; UI: no direction; bit-3 test produced a static colour, not a reversal |
 | Read-back backup for report 6 | **Confirmed** | `05 89 cc` returns the custom frame; `set --from-device` uses it |
 | Extra keys (G/MR/media) | **Not RGB** | Stayed dark in Fixed_on and Self-define; `Cfg.ini` has no `[KEY]` entries |
-| Slots `102–125` | **Duplicate/dead** | Slot 105 = LCtrl, slot 6 = F5; no extra RGB keys |
+| Packet-slot sweep + verify | **Confirmed** | 87 keys, 3 logo zones (77–79), 0 aliases, 36 dead; corrected bottom row: Z 86, X 87, C 88 … / 95 |
 | Lighting persistence across power cycle | **Confirmed** | Settings survived an unplug/replug power cycle |
 | Built-in effect override behavior | **Confirmed** | A `09 cc` frame is ignored while an effect is active; `set` switches to Self-define by default |
 | Volume roller addressability | **No RGB** | No addressable LED observed |
@@ -548,7 +562,8 @@ reactive key effects, and ambient modes are future work.
    still unavailable. The CLI stores the frame it last wrote as a local
    write-ahead record instead.
 3. **Extra-key addressability** — Resolved. The K622's G/MR/media keys have no
-   individually addressable RGB LEDs; slots `102–125` are duplicates/dead.
+   individually addressable RGB LEDs. The full sweep found only the three
+   logo zones (packet 77–79) among the extra slots; the rest are dead.
 4. **Built-in effect override** — Resolved. A per-key `09 cc` frame is ignored
    while an effect mode is active; `k622rgb set` now switches the board to
    Self-define mode by default.
@@ -562,9 +577,8 @@ reactive key effects, and ambient modes are future work.
 8. **Regional/wireless variants** — US QWERTY wired only. ISO, Bluetooth, and
    2.4 GHz variants are out of scope.
 9. **Shared K618/K622 config** — Some `Cfg.ini` entries (e.g., G5) may belong to
-   a sibling variant. Hardware testing showed the K622's extra slots
-   `102–125` are duplicate/dead positions, so there are no extra RGB keys to
-   map.
+   a sibling variant. The full sweep found no G/MR/media RGB keys; the only
+   extra LEDs are the three logo zones at packet slots 77–79.
 10. **Label typo** — `SrcLock` in `Cfg.ini` is normalized to `ScrLk`.
 11. **Multiple keyboards/concurrency** — Another tool (official software in a
     VM, OpenRGB, a second instance) could fight for the device. The CLI should

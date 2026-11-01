@@ -306,9 +306,9 @@ class CliTests(unittest.TestCase):
             ["set", "--no-activate", "--state", state_path, "1=green"]
         )
         _fd, packet = writer.call_args.args
-        self.assertEqual(packet[8], 255)         # Esc red kept
-        self.assertEqual(packet[8 + 7], 0)       # 1 is not red
-        self.assertEqual(packet[134 + 7], 255)   # 1 is green
+        self.assertEqual(packet[8], 255)          # Esc red kept
+        self.assertEqual(packet[8 + 22], 0)       # 1 is not red
+        self.assertEqual(packet[134 + 22], 255)   # 1 is green
 
     def test_set_off_clears_saved_frame(self):
         state_path = self.state_file()
@@ -327,8 +327,8 @@ class CliTests(unittest.TestCase):
             ["set", "--no-activate", "--state", state_path, "--reset", "1=green"]
         )
         _fd, packet = writer.call_args.args
-        self.assertEqual(packet[8], 0)           # Esc red dropped
-        self.assertEqual(packet[134 + 7], 255)   # 1 is green
+        self.assertEqual(packet[8], 0)            # Esc red dropped
+        self.assertEqual(packet[134 + 22], 255)   # 1 is green
 
     def test_set_all_fills_every_slot(self):
         code, out, _err, _opener, _reader, writer = self.run_cli(
@@ -358,6 +358,25 @@ class CliTests(unittest.TestCase):
         self.assertEqual(packet[8 + 6], 255)
         self.assertEqual(packet[134 + 6], 255)
         self.assertEqual(packet[260 + 6], 255)
+
+    def test_set_accepts_logo_zone(self):
+        code, out, _err, _opener, _reader, writer = self.run_cli(
+            ["set", "--no-activate", "--no-state", "LogoLeft=0000ff"]
+        )
+        self.assertEqual(code, 0)
+        _fd, packet = writer.call_args.args
+        self.assertEqual(packet[260 + 77], 255)
+        self.assertIn("set: LogoLeft (slot 77)", out)
+
+    def test_set_x_lights_slot_87(self):
+        code, out, err, _opener, _reader, writer = self.run_cli(
+            ["set", "--no-activate", "--no-state", "X=red"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("set: X (slot 87)", out)
+        self.assertNotIn("did not light during calibration", err)
+        _fd, packet = writer.call_args.args
+        self.assertEqual(packet[8 + 87], 255)
 
     def test_set_activate_default_and_opt_out(self):
         parser = cli.build_parser()
@@ -480,28 +499,32 @@ class CliTests(unittest.TestCase):
 
     # -- list ------------------------------------------------------------
 
-    def test_list_shows_main_map_and_extra_note(self):
+    def test_list_shows_map_summary(self):
         code, out, err, opener, reader, writer = self.run_cli(["list"])
         self.assertEqual(code, 0)
-        self.assertIn("87 mapped, 15 dead", out)
-        self.assertIn("87 main keys", out)
+        self.assertIn("87 mapped, 3 logo zones, 0 aliases, 36 dead", out)
+        self.assertIn(
+            "logo zones: LogoLeft=77, LogoCenter=78, LogoRight=79", out
+        )
+        self.assertNotIn("unlit during calibration", out)
         self.assertIn("no individually addressable RGB LEDs", out)
-        self.assertIn("slots 102-125", out)
         opener.assert_not_called()
         reader.assert_not_called()
         writer.assert_not_called()
         self.assertEqual(err, "")
 
-    def test_list_all_prints_main_block_and_extra_block(self):
+    def test_list_all_prints_packet_slots(self):
         code, out, _err, _opener, _reader, _writer = self.run_cli(
             ["list", "--all"]
         )
         self.assertEqual(code, 0)
-        self.assertIn("main block:", out)
+        self.assertIn("packet slots:", out)
         self.assertIn("Esc", out)
+        self.assertIn("LogoLeft", out)
         self.assertIn("dead", out)
-        self.assertIn("extra block (duplicate/dead, not RGB):", out)
-        self.assertIn("102  duplicate/dead", out)
+        self.assertIn("85  -            dead", out)
+        self.assertIn("87  X            key", out)
+        self.assertIn("95  /            key", out)
 
     def test_set_rejects_extra_key(self):
         code, _out, err, opener, _reader, writer = self.run_cli(

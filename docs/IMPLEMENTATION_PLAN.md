@@ -18,12 +18,18 @@ keyboard, modeled on
 > Treat the phase plan below as historical where it mentions report `0x08`.
 >
 > **Phase 2 removed (2026-11-01).** Hardware testing showed that the K622's
-> G1–G4/MR/RGB/media keys have no individually addressable RGB LEDs; slots
-> `102–125` and the 15 `Cfg.ini` gaps are duplicate/dead matrix positions
-> (slot 105 = LCtrl, slot 6 = F5). The calibration command, `layout.json`
-> loading and the extra-key aliases were removed from the CLI. The RGB set is
-> the 87 main keys only. The historical calibration material has been removed
-> from this plan because it does not describe the current tool.
+> G1–G4/MR/RGB/media keys have no individually addressable RGB LEDs. The
+> historical calibration command and `layout.json` loading were removed.
+>
+> **Packet-slot correction (2026-11-01).** The `Cfg.ini` LED slot is not the
+> report-0x06 packet index. The packet is row-major
+> (`packet = row*21 + col`); `Cfg.ini` is column-major
+> (`cfg = col*6 + row`). A full 126-slot sweep plus a key-name verify pass
+> confirmed 87 keys, three addressable logo zones (`LogoLeft`, `LogoCenter`,
+> `LogoRight` at packet slots 77–79), no alias slots, and 36 dead slots. The
+> corrected bottom row is `84 LShift, 85 dead, 86 Z, 87 X, 88 C, 89 V, 90 B,
+> 91 N, 92 M, 93 comma, 94 period, 95 slash, 96 dead, 97 RShift`. See
+> [KEYMAP.md](KEYMAP.md).
 >
 > **Phase 3 status (2026-11-01): implemented.** The built-in effects are driven
 > by the keyboard itself, not host-side animation: `mode`, `color`, `config`
@@ -104,7 +110,7 @@ k622rgb/
 | Module | Responsibility |
 |---|---|
 | `controller.py` | Find IF1, parse/validate the descriptor, read the config/palette/frame mailboxes, and build/validate/send the captured report-0x06 write shapes. |
-| `layout.py` | Static main-key map and aliases for slots `0–101`, plus the duplicate/dead slot table. |
+| `layout.py` | Loads the generated packet-slot tables (`keymap_data.py`): 87 keys, 3 logo zones, aliases and dead slots; resolves names to packet slots. |
 | `colors.py` | Parse `#RRGGBB`, `RRGGBB`, `r,g,b`, named colors; scale brightness for `set`. |
 | `profiles.py` | Read/write lighting profiles atomically; list/show/delete. |
 | `state.py` | Store the last one-shot frame and timestamped config/palette backups atomically. |
@@ -275,16 +281,15 @@ Some commands add their own flags (`set --state/--no-state/--hex`,
 
 ## 6. Layout
 
-`layout.py` contains the 87-key map for slots `0–101` from
-[KEYMAP.md](KEYMAP.md), the 15 duplicate/dead main-key positions, and
-case-insensitive aliases. The numeric `slot:N` escape remains available for
-diagnostics.
+`layout.py` loads the generated packet-slot tables from
+`k622rgb/keymap_data.py`. The full 126-slot sweep found 87 main keys, three
+addressable logo zones (`LogoLeft`, `LogoCenter`, `LogoRight` at packet slots
+77–79), no alias slots, and 36 dead slots. The numeric
+`slot:N` escape remains available for diagnostics.
 
-Slots `102–125` are duplicate/dead matrix positions, not extra RGB keys.
-Hardware testing showed the G1–G4/MR/RGB/media keys and volume roller have no
-individually addressable LEDs. The interactive calibration command,
-`layout.json` loading and extra-key aliases were therefore removed; `list`
-reports the dead/duplicate slots instead.
+The G1–G4/MR/RGB/media keys and volume roller have no individually addressable
+LEDs. The interactive calibration command and `layout.json` loading were
+removed; `list` reports the key, zone, alias and dead-slot map instead.
 
 ## 7. Profiles and state
 
@@ -426,12 +431,13 @@ sudo chmod 666 /dev/hidraw6   # resets on replug
 **Probe sequence:**
 
 1. All off.
-2. Slot 0 red (Esc).
-3. Slot 7 green (`1`).
-4. Slot 101 blue (Right).
-5. Slot 6 white (dead).
-6. Slot 0 red → green → blue (RGB order).
-7. Slots `102–125` one at a time (record extra keys).
+2. Packet slot 0 red (Esc).
+3. Packet slot 22 green (`1`).
+4. Packet slot 121 blue (Right).
+5. Packet slot 6 white (F5).
+6. Packet slot 0 red → green → blue (RGB order).
+7. Sweep all 126 packet slots; the final sweep found logo zones at 77–79
+   and dead slots elsewhere. A key-name verify pass corrected the bottom row.
 
 **Exit criteria:**
 
@@ -466,8 +472,9 @@ of the official Windows software or further static analysis.
 
 ### Phase 2 — Calibration (removed)
 
-Not applicable to the K622: the G/MR/media keys have no addressable RGB LEDs
-and slots `102–125` are duplicate/dead. The command, `layout.json` support and
+The G/MR/media keys have no addressable RGB LEDs. The full sweep replaced the
+old calibration command with the generated packet-slot map: 87 keys, three
+logo zones, no aliases and 36 dead slots. The `layout.json` support and
 extra-key aliases were removed.
 
 ### Phase 3 — Profiles and effects (implemented with onboard effects)
@@ -570,9 +577,10 @@ python3 -m unittest discover -s tests -v
 
 - Fresh clone + udev rule + `./bin/k622rgb set Esc=red` works from the README
   alone.
-- All 87 main keys are individually addressable.
-- On the K622, the 87 main keys are the RGB set; the G/MR/media keys have no
-  addressable RGB LEDs.
+- All 87 main keys are mapped and light correctly; the key-name verify pass
+  covers every key.
+- The RGB set is the 87 main keys plus three addressable logo zones; the
+  G/MR/media keys have no addressable RGB LEDs.
 - All 20 built-in effects, Self-define and OFF work, with brightness/speed/
   colour/random, without disturbing typing.
 - `check` gives a clear fix for every common discovery/permission failure.

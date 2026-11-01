@@ -21,9 +21,14 @@ Everything below is implemented and was verified on the physical keyboard:
 - Factory-reset config layouts (`5a a5` marker at `0x46` or `0x81`).
 
 The K622's G1–G4, MR, RGB toggle, media buttons and volume roller **do not have
-individually addressable RGB LEDs**. The 87 main keys are the complete RGB set.
-Slots `102–125` are duplicate/dead matrix positions; there is no calibration
-command.
+individually addressable RGB LEDs**. The RGB set is the 87 main keys plus three
+addressable Redragon logo zones: `LogoLeft`, `LogoCenter` and `LogoRight`.
+
+Packet slots are row-major 21-column indices. The official `Cfg.ini` uses a
+different column-major numbering; the full map and the conversion formula are
+in [docs/KEYMAP.md](docs/KEYMAP.md). The bottom row was corrected by a
+key-name verify pass: `X` is packet slot `87`, `Z` is `86`, and slot `85` is
+a dead gap. There are no alias slots and no unlit keys.
 
 ## Requirements
 
@@ -154,14 +159,24 @@ Aliases are accepted for common spellings: `Escape`→`Esc`,
 `Minus`/`Hyphen`→`-`, `Equals`→`=`, `ArrowUp`/`ArrowDown`/`ArrowLeft`/
 `ArrowRight`→`Up`/`Down`/`Left`/`Right`, and `App`→`Menu`.
 
-Dead matrix positions can be addressed numerically for diagnostics only:
+The three addressable logo zones have their own names:
+
+```bash
+./bin/k622rgb set LogoLeft=0000ff
+./bin/k622rgb set LogoCenter=0000ff
+./bin/k622rgb set LogoRight=0000ff
+```
+
+Raw packet slots remain available for diagnostics:
 
 ```bash
 ./bin/k622rgb set slot:6=ffffff         # lights F5 on the K622
 ./bin/k622rgb set slot:105=ffffff       # lights LCtrl
+./bin/k622rgb set slot:95=ffffff        # lights /
 ```
 
-See [docs/KEYMAP.md](docs/KEYMAP.md) for the full map.
+See [docs/KEYMAP.md](docs/KEYMAP.md) for the full map, including the corrected
+bottom row and the 36 dead slots.
 
 ## Safety
 

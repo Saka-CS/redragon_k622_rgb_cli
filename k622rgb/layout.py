@@ -1,116 +1,32 @@
 """Key names and LED-slot lookup for the Redragon K622.
 
-The slot numbers and canonical names come from the official ``Cfg.ini``
-``[KEY]`` section (normalised as described in ``docs/KEYMAP.md``). The K622's
-G1-G4/MR/RGB/media keys are not RGB; slots ``102-125`` and the ``Cfg.ini`` gaps
-are duplicate/dead matrix positions and can still be addressed explicitly as
-``slot:N`` for diagnostics.
+Packet slots are the row-major 21-column indices used by the report-0x06
+``09 cc`` frame.  The generated tables in :mod:`k622rgb.keymap_data` come from
+``docs/keymap-observed.json``, produced by ``tools/keymap_probe.py``.
+
+The K622's G1-G4/MR/RGB/media keys are not individually addressable.  The
+Redragon logo has three addressable zones (``LogoLeft``, ``LogoCenter`` and
+``LogoRight``).  The bottom row was corrected by a key-name verify pass:
+packet slots 84-97 are LShift, dead, Z, X, C, V, B, N, M, comma, period,
+slash, dead, RShift.
 """
 
 from .controller import NUM_SLOTS
-
-#: Canonical key name for every LED slot that the official software maps.
-SLOT_NAMES = {
-    0: "Esc",
-    1: "`",
-    2: "Tab",
-    3: "Caps",
-    4: "LShift",
-    5: "LCtrl",
-    7: "1",
-    8: "Q",
-    9: "A",
-    10: "Z",
-    11: "Win",
-    12: "F1",
-    13: "2",
-    14: "W",
-    15: "S",
-    16: "X",
-    17: "LAlt",
-    18: "F2",
-    19: "3",
-    20: "E",
-    21: "D",
-    22: "C",
-    24: "F3",
-    25: "4",
-    26: "R",
-    27: "F",
-    28: "V",
-    30: "F4",
-    31: "5",
-    32: "T",
-    33: "G",
-    34: "B",
-    35: "Space",
-    36: "F5",
-    37: "6",
-    38: "Y",
-    39: "H",
-    40: "N",
-    42: "F6",
-    43: "7",
-    44: "U",
-    45: "J",
-    46: "M",
-    48: "F7",
-    49: "8",
-    50: "I",
-    51: "K",
-    52: ",",
-    53: "RAlt",
-    54: "F8",
-    55: "9",
-    56: "O",
-    57: "L",
-    58: ".",
-    59: "Fn",
-    60: "F9",
-    61: "0",
-    62: "P",
-    63: ";",
-    64: "/",
-    65: "Menu",
-    66: "F10",
-    67: "-",
-    68: "[",
-    69: "'",
-    72: "F11",
-    73: "=",
-    74: "]",
-    78: "F12",
-    79: "Bksp",
-    80: "\\",
-    81: "Enter",
-    82: "RShift",
-    83: "RCtrl",
-    84: "PrtSc",
-    85: "Ins",
-    86: "Del",
-    89: "Left",
-    90: "ScrLk",
-    91: "Home",
-    92: "End",
-    94: "Up",
-    95: "Down",
-    96: "Pause",
-    97: "PgUp",
-    98: "PgDn",
-    101: "Right",
-}
-
-#: Slots present in the 126-slot packet but with no LED on the K622.
-DEAD_SLOTS = frozenset(
-    (6, 23, 29, 41, 47, 70, 71, 75, 76, 77, 87, 88, 93, 99, 100)
+from .keymap_data import (
+    ALIAS_SLOTS,
+    DEAD_SLOTS,
+    SLOT_NAMES,
+    UNLIT_KEYS,
+    ZONE_NAMES,
 )
 
-#: Extra 126-slot positions; duplicate/dead on the K622 (not RGB keys).
-EXTRA_SLOT_START = 102
-EXTRA_SLOT_END = 125
-EXTRA_SLOTS = range(EXTRA_SLOT_START, EXTRA_SLOT_END + 1)
+#: Addressable non-key LED zones.
+ZONES = dict(ZONE_NAMES)
 
-#: Accepted spellings that map to a canonical name above.
+#: Keys whose LED did not light during calibration.
+UNLIT = frozenset(UNLIT_KEYS)
+
+#: Accepted spellings that map to a canonical main-key name.
 ALIASES = {
     "escape": "Esc",
     "capslock": "Caps",
@@ -160,10 +76,33 @@ ALIASES = {
     "arrowright": "Right",
 }
 
+#: Accepted spellings for the addressable logo zones.
+ZONE_ALIASES = {
+    "logo1": "LogoLeft",
+    "logoleft": "LogoLeft",
+    "logo-left": "LogoLeft",
+    "logo2": "LogoCenter",
+    "logocenter": "LogoCenter",
+    "logocentre": "LogoCenter",
+    "logo-center": "LogoCenter",
+    "logo3": "LogoRight",
+    "logoright": "LogoRight",
+    "logo-right": "LogoRight",
+}
+
 _CANONICAL_TO_SLOT = {name.lower(): slot for slot, name in SLOT_NAMES.items()}
+_CANONICAL_TO_SLOT.update(
+    {name.lower(): slot for slot, name in ZONE_NAMES.items()}
+)
 NAME_TO_SLOT = dict(_CANONICAL_TO_SLOT)
 for _alias, _canonical in ALIASES.items():
-    NAME_TO_SLOT[_alias] = _CANONICAL_TO_SLOT[_canonical.lower()]
+    _slot = _CANONICAL_TO_SLOT.get(_canonical.lower())
+    if _slot is not None:
+        NAME_TO_SLOT[_alias] = _slot
+for _alias, _canonical in ZONE_ALIASES.items():
+    _slot = _CANONICAL_TO_SLOT.get(_canonical.lower())
+    if _slot is not None:
+        NAME_TO_SLOT[_alias] = _slot
 
 
 class UnknownKey(ValueError):
@@ -183,11 +122,11 @@ def _parse_slot(text: str) -> int:
 
 
 def resolve_key(name: str) -> int:
-    """Return the LED slot for a main key name or ``slot:N``.
+    """Return the packet slot for a key name, zone name or ``slot:N``.
 
-    Lookup is case-insensitive and accepts the aliases in :data:`ALIASES`.
-    Extra-key names are deliberately rejected: the K622's G/MR/RGB/media keys
-    do not have individually addressable RGB LEDs.
+    Lookup is case-insensitive and accepts the aliases in :data:`ALIASES` and
+    :data:`ZONE_ALIASES`.  Extra-key names that are not addressable are
+    deliberately rejected.
     """
     if not isinstance(name, str):
         raise UnknownKey("key name must be text, got %r" % (name,))
@@ -206,10 +145,28 @@ def resolve_key(name: str) -> int:
 
     raise UnknownKey(
         "unknown key %r; the K622's G/MR/RGB/media keys are not RGB. "
-        "Use slot:N for diagnostics." % name
+        "Use LogoLeft/LogoCenter/LogoRight for the logo zones, or slot:N "
+        "for diagnostics." % name
     )
 
 
+def slot_kind(slot: int) -> str:
+    """Return ``key``, ``zone``, ``alias`` or ``dead`` for a packet slot."""
+    if slot in SLOT_NAMES:
+        return "key"
+    if slot in ZONE_NAMES:
+        return "zone"
+    if slot in ALIAS_SLOTS:
+        return "alias"
+    return "dead"
+
+
 def canonical_name(slot: int) -> str:
-    """Human-readable main-key name, or ``slot:N`` for an unmapped slot."""
-    return SLOT_NAMES.get(slot, "slot:%d" % slot)
+    """Human-readable key/zone name, or ``slot:N`` for an unmapped slot."""
+    if slot in SLOT_NAMES:
+        return SLOT_NAMES[slot]
+    if slot in ZONE_NAMES:
+        return ZONE_NAMES[slot]
+    if slot in ALIAS_SLOTS:
+        return ALIAS_SLOTS[slot]
+    return "slot:%d" % slot

@@ -26,9 +26,12 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 - Official UI: **verified under Wine 11** (mode list, sliders, colour picker).
 - Extra keys: **not RGB**. G1-G4, MR, the RGB toggle and the media buttons
   stayed dark in both Fixed_on and Self-define modes. `Cfg.ini` has no `[KEY]`
-  entries for them; slots `102-125` are duplicate/dead positions.
-- Calibration: **removed** from the CLI. The K622's G1-G4/MR/RGB/media keys
-  are not RGB; the RGB set is the 87 main keys.
+  entries for them.
+- Packet-slot map: **verified by a full 126-slot sweep and a key-name verify
+  pass**. The RGB set is the 87 main keys plus three addressable Redragon logo
+  zones (`LogoLeft`, `LogoCenter`, `LogoRight`). There are no aliases and 36
+  dead slots. The corrected bottom row puts `Z` at 86, `X` at 87, `C` at 88,
+  and `/` at 95.
 - Remaining work: optional game-mode/dynamic effects, or a daemon.
 - Commits: hardware gate passed.
 
@@ -87,22 +90,25 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 The K622's G1–G4, MR, RGB toggle, Previous, Play/Pause, Next, Mute and volume
 roller **do not have individually addressable RGB LEDs**. They stayed dark in
 both Fixed_on and Self-define modes while the main keys changed colour, and
-`Cfg.ini` has no `[KEY]` entries for them. The 87 main keys are the entire RGB
-set.
+`Cfg.ini` has no `[KEY]` entries for them. The RGB set is the 87 main keys
+plus the three addressable logo zones.
 
-Slots `102–125` and the 15 `Cfg.ini` gaps are duplicate/dead matrix positions,
-not extra RGB keys. Tested examples: slot `105` lights LCtrl, slot `6` lights
-F5. There is no calibration command in the CLI; the 87 main keys are the RGB
-set.
+The full sweep also found three addressable Redragon logo zones at packet
+slots 77, 78 and 79. They are exposed as `LogoLeft`, `LogoCenter` and
+`LogoRight`. The remaining extra slots are dead.
 
 The numeric `slot:N` escape remains useful for diagnostics:
 
 ```bash
 ./bin/k622rgb set slot:6=ffffff         # lights F5 on the K622
 ./bin/k622rgb set slot:105=ffffff       # lights LCtrl
+./bin/k622rgb set slot:95=ffffff        # lights /
 ```
 
 `k622rgb set G1=red`, `MR=blue`, etc. are not meaningful on this board.
+
+The key-name verify pass corrected the bottom row: `Z` is packet 86, `X` is
+87, `C` is 88, and `/` is 95. Packet 85 is a dead gap.
 
 ## Factory reset and mode notes
 
@@ -113,7 +119,8 @@ The numeric `slot:N` escape remains useful for diagnostics:
   therefore switches to **Self-define** mode by default; use
   `set --no-activate` if you want to leave the current effect running.
 - The K622's G1-G4, MR, RGB/media keys and volume roller are not RGB. There is
-  no extra-key calibration command; the 87 main keys are the RGB set.
+  no extra-key calibration command; the RGB set is the 87 main keys plus the
+  three addressable logo zones (`LogoLeft`, `LogoCenter`, `LogoRight`).
 
 ## Profiles
 
@@ -165,8 +172,8 @@ never sends an arbitrary report-5 command.
 | Brightness / speed | `0–9` / `1–4`, per mode |
 | Effect palette | 21 blocks × 7 RGB triples (blocks 1–20 used) |
 | Template sha256 | `5d922916bdeadf7bfc3676a00855b8c0b9e05562e083d344d67dd58c73e4626a` |
-| Main key LED slots | `0–101` (87 keys, 15 dead slots) |
-| Extra LED slots | `102–125` duplicate/dead (not RGB); no extra key LEDs |
+| Key/zone LED slots | 87 keys + 3 logo zones; 36 dead slots; 0 aliases |
+| Packet vs Cfg slot | packet = `row*21+col`; Cfg = `col*6+row` |
 | RGB order | R, G, B |
 | Descriptor sha256 | `32771137a995e90b6fa9d210761c23ce61e60a21accd033b86f484f198a5061c` |
 | Reference project | <https://github.com/kn4oqw-clint/redragon-ks82b-rgb> |

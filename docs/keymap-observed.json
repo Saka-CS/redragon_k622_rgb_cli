@@ -1,0 +1,1060 @@
+{
+  "complete": true,
+  "created": "2026-11-01T13:10:59Z",
+  "dead_slots": [
+    1,
+    17,
+    18,
+    19,
+    20,
+    38,
+    39,
+    40,
+    41,
+    59,
+    60,
+    61,
+    62,
+    75,
+    80,
+    81,
+    82,
+    83,
+    85,
+    96,
+    98,
+    100,
+    101,
+    102,
+    103,
+    104,
+    108,
+    109,
+    111,
+    112,
+    116,
+    117,
+    122,
+    123,
+    124,
+    125
+  ],
+  "descriptor_sha256": null,
+  "device": null,
+  "duplicates": {},
+  "extra_slots": [],
+  "geometry": {
+    "cfg_formula": "cfg_slot = (packet_slot % 21) * 6 + (packet_slot // 21)",
+    "cfg_order": "column-major",
+    "cols": 21,
+    "packet_formula": "packet_slot = (cfg_slot % 6) * 21 + (cfg_slot // 6)",
+    "packet_order": "row-major",
+    "rows": 6
+  },
+  "inferred_keys": {},
+  "keys": {
+    "'": 74,
+    ",": 93,
+    "-": 32,
+    ".": 94,
+    "/": 95,
+    "0": 31,
+    "1": 22,
+    "2": 23,
+    "3": 24,
+    "4": 25,
+    "5": 26,
+    "6": 27,
+    "7": 28,
+    "8": 29,
+    "9": 30,
+    ";": 73,
+    "=": 33,
+    "A": 64,
+    "B": 90,
+    "Bksp": 34,
+    "C": 88,
+    "Caps": 63,
+    "D": 66,
+    "Del": 56,
+    "Down": 120,
+    "E": 45,
+    "End": 57,
+    "Enter": 76,
+    "Esc": 0,
+    "F": 67,
+    "F1": 2,
+    "F10": 11,
+    "F11": 12,
+    "F12": 13,
+    "F2": 3,
+    "F3": 4,
+    "F4": 5,
+    "F5": 6,
+    "F6": 7,
+    "F7": 8,
+    "F8": 9,
+    "F9": 10,
+    "Fn": 114,
+    "G": 68,
+    "H": 69,
+    "Home": 36,
+    "I": 50,
+    "Ins": 35,
+    "J": 70,
+    "K": 71,
+    "L": 72,
+    "LAlt": 107,
+    "LCtrl": 105,
+    "LShift": 84,
+    "Left": 119,
+    "M": 92,
+    "Menu": 115,
+    "N": 91,
+    "O": 51,
+    "P": 52,
+    "Pause": 16,
+    "PgDn": 58,
+    "PgUp": 37,
+    "PrtSc": 14,
+    "Q": 43,
+    "R": 46,
+    "RAlt": 113,
+    "RCtrl": 118,
+    "RShift": 97,
+    "Right": 121,
+    "S": 65,
+    "ScrLk": 15,
+    "Space": 110,
+    "T": 47,
+    "Tab": 42,
+    "U": 49,
+    "Up": 99,
+    "V": 89,
+    "W": 44,
+    "Win": 106,
+    "X": 87,
+    "Y": 48,
+    "Z": 86,
+    "[": 53,
+    "\\": 55,
+    "]": 54,
+    "`": 21
+  },
+  "mismatches": [],
+  "missing_keys": [],
+  "skipped_slots": [],
+  "slots": {
+    "0": {
+      "category": "main",
+      "cfg_slot": 0,
+      "expected": "Esc",
+      "observed": "Esc",
+      "status": "ok"
+    },
+    "1": {
+      "category": "dead",
+      "cfg_slot": 6,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "10": {
+      "category": "main",
+      "cfg_slot": 60,
+      "expected": "F9",
+      "observed": "F9",
+      "status": "ok"
+    },
+    "100": {
+      "category": "dead",
+      "cfg_slot": 100,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "101": {
+      "category": "extra",
+      "cfg_slot": 106,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "102": {
+      "category": "extra",
+      "cfg_slot": 112,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "103": {
+      "category": "extra",
+      "cfg_slot": 118,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "104": {
+      "category": "extra",
+      "cfg_slot": 124,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "105": {
+      "category": "main",
+      "cfg_slot": 5,
+      "expected": "LCtrl",
+      "observed": "LCtrl",
+      "status": "ok"
+    },
+    "106": {
+      "category": "main",
+      "cfg_slot": 11,
+      "expected": "Win",
+      "observed": "Win",
+      "status": "ok"
+    },
+    "107": {
+      "category": "main",
+      "cfg_slot": 17,
+      "expected": "LAlt",
+      "observed": "LAlt",
+      "status": "ok"
+    },
+    "108": {
+      "category": "dead",
+      "cfg_slot": 23,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "109": {
+      "category": "dead",
+      "cfg_slot": 29,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "11": {
+      "category": "main",
+      "cfg_slot": 66,
+      "expected": "F10",
+      "observed": "F10",
+      "status": "ok"
+    },
+    "110": {
+      "category": "main",
+      "cfg_slot": 35,
+      "expected": "Space",
+      "observed": "Space",
+      "status": "ok"
+    },
+    "111": {
+      "category": "dead",
+      "cfg_slot": 41,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "112": {
+      "category": "dead",
+      "cfg_slot": 47,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "113": {
+      "category": "main",
+      "cfg_slot": 53,
+      "expected": "RAlt",
+      "observed": "RAlt",
+      "status": "ok"
+    },
+    "114": {
+      "category": "main",
+      "cfg_slot": 59,
+      "expected": "Fn",
+      "observed": "Fn",
+      "status": "ok"
+    },
+    "115": {
+      "category": "main",
+      "cfg_slot": 65,
+      "expected": "Menu",
+      "observed": "Menu",
+      "status": "ok"
+    },
+    "116": {
+      "category": "dead",
+      "cfg_slot": 71,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "117": {
+      "category": "dead",
+      "cfg_slot": 77,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "118": {
+      "category": "main",
+      "cfg_slot": 83,
+      "expected": "RCtrl",
+      "observed": "RCtrl",
+      "status": "ok"
+    },
+    "119": {
+      "category": "main",
+      "cfg_slot": 89,
+      "expected": "Left",
+      "observed": "Left",
+      "status": "ok"
+    },
+    "12": {
+      "category": "main",
+      "cfg_slot": 72,
+      "expected": "F11",
+      "observed": "F11",
+      "status": "ok"
+    },
+    "120": {
+      "category": "main",
+      "cfg_slot": 95,
+      "expected": "Down",
+      "observed": "Down",
+      "status": "ok"
+    },
+    "121": {
+      "category": "main",
+      "cfg_slot": 101,
+      "expected": "Right",
+      "observed": "Right",
+      "status": "ok"
+    },
+    "122": {
+      "category": "extra",
+      "cfg_slot": 107,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "123": {
+      "category": "extra",
+      "cfg_slot": 113,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "124": {
+      "category": "extra",
+      "cfg_slot": 119,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "125": {
+      "category": "extra",
+      "cfg_slot": 125,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "13": {
+      "category": "main",
+      "cfg_slot": 78,
+      "expected": "F12",
+      "observed": "F12",
+      "status": "ok"
+    },
+    "14": {
+      "category": "main",
+      "cfg_slot": 84,
+      "expected": "PrtSc",
+      "observed": "PrtSc",
+      "status": "ok"
+    },
+    "15": {
+      "category": "main",
+      "cfg_slot": 90,
+      "expected": "ScrLk",
+      "observed": "ScrLk",
+      "status": "ok"
+    },
+    "16": {
+      "category": "main",
+      "cfg_slot": 96,
+      "expected": "Pause",
+      "observed": "Pause",
+      "status": "ok"
+    },
+    "17": {
+      "category": "extra",
+      "cfg_slot": 102,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "18": {
+      "category": "extra",
+      "cfg_slot": 108,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "19": {
+      "category": "extra",
+      "cfg_slot": 114,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "2": {
+      "category": "main",
+      "cfg_slot": 12,
+      "expected": "F1",
+      "observed": "F1",
+      "status": "ok"
+    },
+    "20": {
+      "category": "extra",
+      "cfg_slot": 120,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "21": {
+      "category": "main",
+      "cfg_slot": 1,
+      "expected": "`",
+      "observed": "`",
+      "status": "ok"
+    },
+    "22": {
+      "category": "main",
+      "cfg_slot": 7,
+      "expected": "1",
+      "observed": "1",
+      "status": "ok"
+    },
+    "23": {
+      "category": "main",
+      "cfg_slot": 13,
+      "expected": "2",
+      "observed": "2",
+      "status": "ok"
+    },
+    "24": {
+      "category": "main",
+      "cfg_slot": 19,
+      "expected": "3",
+      "observed": "3",
+      "status": "ok"
+    },
+    "25": {
+      "category": "main",
+      "cfg_slot": 25,
+      "expected": "4",
+      "observed": "4",
+      "status": "ok"
+    },
+    "26": {
+      "category": "main",
+      "cfg_slot": 31,
+      "expected": "5",
+      "observed": "5",
+      "status": "ok"
+    },
+    "27": {
+      "category": "main",
+      "cfg_slot": 37,
+      "expected": "6",
+      "observed": "6",
+      "status": "ok"
+    },
+    "28": {
+      "category": "main",
+      "cfg_slot": 43,
+      "expected": "7",
+      "observed": "7",
+      "status": "ok"
+    },
+    "29": {
+      "category": "main",
+      "cfg_slot": 49,
+      "expected": "8",
+      "observed": "8",
+      "status": "ok"
+    },
+    "3": {
+      "category": "main",
+      "cfg_slot": 18,
+      "expected": "F2",
+      "observed": "F2",
+      "status": "ok"
+    },
+    "30": {
+      "category": "main",
+      "cfg_slot": 55,
+      "expected": "9",
+      "observed": "9",
+      "status": "ok"
+    },
+    "31": {
+      "category": "main",
+      "cfg_slot": 61,
+      "expected": "0",
+      "observed": "0",
+      "status": "ok"
+    },
+    "32": {
+      "category": "main",
+      "cfg_slot": 67,
+      "expected": "-",
+      "observed": "-",
+      "status": "ok"
+    },
+    "33": {
+      "category": "main",
+      "cfg_slot": 73,
+      "expected": "=",
+      "observed": "=",
+      "status": "ok"
+    },
+    "34": {
+      "category": "main",
+      "cfg_slot": 79,
+      "expected": "Bksp",
+      "observed": "Bksp",
+      "status": "ok"
+    },
+    "35": {
+      "category": "main",
+      "cfg_slot": 85,
+      "expected": "Ins",
+      "observed": "Ins",
+      "status": "ok"
+    },
+    "36": {
+      "category": "main",
+      "cfg_slot": 91,
+      "expected": "Home",
+      "observed": "Home",
+      "status": "ok"
+    },
+    "37": {
+      "category": "main",
+      "cfg_slot": 97,
+      "expected": "PgUp",
+      "observed": "PgUp",
+      "status": "ok"
+    },
+    "38": {
+      "category": "extra",
+      "cfg_slot": 103,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "39": {
+      "category": "extra",
+      "cfg_slot": 109,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "4": {
+      "category": "main",
+      "cfg_slot": 24,
+      "expected": "F3",
+      "observed": "F3",
+      "status": "ok"
+    },
+    "40": {
+      "category": "extra",
+      "cfg_slot": 115,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "41": {
+      "category": "extra",
+      "cfg_slot": 121,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "42": {
+      "category": "main",
+      "cfg_slot": 2,
+      "expected": "Tab",
+      "observed": "Tab",
+      "status": "ok"
+    },
+    "43": {
+      "category": "main",
+      "cfg_slot": 8,
+      "expected": "Q",
+      "observed": "Q",
+      "status": "ok"
+    },
+    "44": {
+      "category": "main",
+      "cfg_slot": 14,
+      "expected": "W",
+      "observed": "W",
+      "status": "ok"
+    },
+    "45": {
+      "category": "main",
+      "cfg_slot": 20,
+      "expected": "E",
+      "observed": "E",
+      "status": "ok"
+    },
+    "46": {
+      "category": "main",
+      "cfg_slot": 26,
+      "expected": "R",
+      "observed": "R",
+      "status": "ok"
+    },
+    "47": {
+      "category": "main",
+      "cfg_slot": 32,
+      "expected": "T",
+      "observed": "T",
+      "status": "ok"
+    },
+    "48": {
+      "category": "main",
+      "cfg_slot": 38,
+      "expected": "Y",
+      "observed": "Y",
+      "status": "ok"
+    },
+    "49": {
+      "category": "main",
+      "cfg_slot": 44,
+      "expected": "U",
+      "observed": "U",
+      "status": "ok"
+    },
+    "5": {
+      "category": "main",
+      "cfg_slot": 30,
+      "expected": "F4",
+      "observed": "F4",
+      "status": "ok"
+    },
+    "50": {
+      "category": "main",
+      "cfg_slot": 50,
+      "expected": "I",
+      "observed": "I",
+      "status": "ok"
+    },
+    "51": {
+      "category": "main",
+      "cfg_slot": 56,
+      "expected": "O",
+      "observed": "O",
+      "status": "ok"
+    },
+    "52": {
+      "category": "main",
+      "cfg_slot": 62,
+      "expected": "P",
+      "observed": "P",
+      "status": "ok"
+    },
+    "53": {
+      "category": "main",
+      "cfg_slot": 68,
+      "expected": "[",
+      "observed": "[",
+      "status": "ok"
+    },
+    "54": {
+      "category": "main",
+      "cfg_slot": 74,
+      "expected": "]",
+      "observed": "]",
+      "status": "ok"
+    },
+    "55": {
+      "category": "main",
+      "cfg_slot": 80,
+      "expected": "\\",
+      "observed": "\\",
+      "status": "ok"
+    },
+    "56": {
+      "category": "main",
+      "cfg_slot": 86,
+      "expected": "Del",
+      "observed": "Del",
+      "status": "ok"
+    },
+    "57": {
+      "category": "main",
+      "cfg_slot": 92,
+      "expected": "End",
+      "observed": "End",
+      "status": "ok"
+    },
+    "58": {
+      "category": "main",
+      "cfg_slot": 98,
+      "expected": "PgDn",
+      "observed": "PgDn",
+      "status": "ok"
+    },
+    "59": {
+      "category": "extra",
+      "cfg_slot": 104,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "6": {
+      "category": "main",
+      "cfg_slot": 36,
+      "expected": "F5",
+      "observed": "F5",
+      "status": "ok"
+    },
+    "60": {
+      "category": "extra",
+      "cfg_slot": 110,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "61": {
+      "category": "extra",
+      "cfg_slot": 116,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "62": {
+      "category": "extra",
+      "cfg_slot": 122,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "63": {
+      "category": "main",
+      "cfg_slot": 3,
+      "expected": "Caps",
+      "observed": "Caps",
+      "status": "ok"
+    },
+    "64": {
+      "category": "main",
+      "cfg_slot": 9,
+      "expected": "A",
+      "observed": "A",
+      "status": "ok"
+    },
+    "65": {
+      "category": "main",
+      "cfg_slot": 15,
+      "expected": "S",
+      "observed": "S",
+      "status": "ok"
+    },
+    "66": {
+      "category": "main",
+      "cfg_slot": 21,
+      "expected": "D",
+      "observed": "D",
+      "status": "ok"
+    },
+    "67": {
+      "category": "main",
+      "cfg_slot": 27,
+      "expected": "F",
+      "observed": "F",
+      "status": "ok"
+    },
+    "68": {
+      "category": "main",
+      "cfg_slot": 33,
+      "expected": "G",
+      "observed": "G",
+      "status": "ok"
+    },
+    "69": {
+      "category": "main",
+      "cfg_slot": 39,
+      "expected": "H",
+      "observed": "H",
+      "status": "ok"
+    },
+    "7": {
+      "category": "main",
+      "cfg_slot": 42,
+      "expected": "F6",
+      "observed": "F6",
+      "status": "ok"
+    },
+    "70": {
+      "category": "main",
+      "cfg_slot": 45,
+      "expected": "J",
+      "observed": "J",
+      "status": "ok"
+    },
+    "71": {
+      "category": "main",
+      "cfg_slot": 51,
+      "expected": "K",
+      "observed": "K",
+      "status": "ok"
+    },
+    "72": {
+      "category": "main",
+      "cfg_slot": 57,
+      "expected": "L",
+      "observed": "L",
+      "status": "ok"
+    },
+    "73": {
+      "category": "main",
+      "cfg_slot": 63,
+      "expected": ";",
+      "observed": ";",
+      "status": "ok"
+    },
+    "74": {
+      "category": "main",
+      "cfg_slot": 69,
+      "expected": "'",
+      "observed": "'",
+      "status": "ok"
+    },
+    "75": {
+      "category": "dead",
+      "cfg_slot": 75,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "76": {
+      "category": "main",
+      "cfg_slot": 81,
+      "expected": "Enter",
+      "observed": "Enter",
+      "status": "ok"
+    },
+    "77": {
+      "category": "zone",
+      "cfg_slot": 87,
+      "expected": "LogoLeft",
+      "observed": "LogoLeft",
+      "status": "ok"
+    },
+    "78": {
+      "category": "zone",
+      "cfg_slot": 93,
+      "expected": "LogoCenter",
+      "observed": "LogoCenter",
+      "status": "ok"
+    },
+    "79": {
+      "category": "zone",
+      "cfg_slot": 99,
+      "expected": "LogoRight",
+      "observed": "LogoRight",
+      "status": "ok"
+    },
+    "8": {
+      "category": "main",
+      "cfg_slot": 48,
+      "expected": "F7",
+      "observed": "F7",
+      "status": "ok"
+    },
+    "80": {
+      "category": "extra",
+      "cfg_slot": 105,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "81": {
+      "category": "extra",
+      "cfg_slot": 111,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "82": {
+      "category": "extra",
+      "cfg_slot": 117,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "83": {
+      "category": "extra",
+      "cfg_slot": 123,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "84": {
+      "category": "main",
+      "cfg_slot": 4,
+      "expected": "LShift",
+      "observed": "LShift",
+      "status": "ok"
+    },
+    "85": {
+      "category": "dead",
+      "cfg_slot": 10,
+      "expected": null,
+      "observed": null,
+      "source": "verify",
+      "status": "dead",
+      "verified": true
+    },
+    "86": {
+      "category": "main",
+      "cfg_slot": 10,
+      "expected": "Z",
+      "observed": "Z",
+      "source": "verify",
+      "status": "ok",
+      "verified": true
+    },
+    "87": {
+      "category": "main",
+      "cfg_slot": 16,
+      "expected": "X",
+      "observed": "X",
+      "source": "verify",
+      "status": "ok",
+      "verified": true
+    },
+    "88": {
+      "category": "main",
+      "cfg_slot": 22,
+      "expected": "C",
+      "observed": "C",
+      "source": "verify",
+      "status": "ok",
+      "verified": true
+    },
+    "89": {
+      "category": "main",
+      "cfg_slot": 28,
+      "expected": "V",
+      "observed": "V",
+      "source": "verify",
+      "status": "ok",
+      "verified": true
+    },
+    "9": {
+      "category": "main",
+      "cfg_slot": 54,
+      "expected": "F8",
+      "observed": "F8",
+      "status": "ok"
+    },
+    "90": {
+      "category": "main",
+      "cfg_slot": 34,
+      "expected": "B",
+      "observed": "B",
+      "source": "verify",
+      "status": "ok",
+      "verified": true
+    },
+    "91": {
+      "category": "main",
+      "cfg_slot": 40,
+      "expected": "N",
+      "observed": "N",
+      "source": "verify",
+      "status": "ok",
+      "verified": true
+    },
+    "92": {
+      "category": "main",
+      "cfg_slot": 46,
+      "expected": "M",
+      "observed": "M",
+      "source": "verify",
+      "status": "ok",
+      "verified": true
+    },
+    "93": {
+      "category": "main",
+      "cfg_slot": 52,
+      "expected": ",",
+      "observed": ",",
+      "source": "verify",
+      "status": "ok",
+      "verified": true
+    },
+    "94": {
+      "category": "main",
+      "cfg_slot": 58,
+      "expected": ".",
+      "observed": ".",
+      "source": "verify",
+      "status": "ok",
+      "verified": true
+    },
+    "95": {
+      "category": "main",
+      "cfg_slot": 64,
+      "expected": "/",
+      "observed": "/",
+      "source": "verify",
+      "status": "ok",
+      "verified": true
+    },
+    "96": {
+      "category": "dead",
+      "cfg_slot": 76,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "97": {
+      "category": "main",
+      "cfg_slot": 82,
+      "expected": "RShift",
+      "observed": "RShift",
+      "status": "ok"
+    },
+    "98": {
+      "category": "dead",
+      "cfg_slot": 88,
+      "expected": null,
+      "observed": null,
+      "status": "dead"
+    },
+    "99": {
+      "category": "main",
+      "cfg_slot": 94,
+      "expected": "Up",
+      "observed": "Up",
+      "status": "ok"
+    }
+  },
+  "unlit_keys": [],
+  "version": 1,
+  "zones": {
+    "LogoCenter": 78,
+    "LogoLeft": 77,
+    "LogoRight": 79
+  }
+}
