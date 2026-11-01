@@ -17,14 +17,13 @@ keyboard, modeled on
 > not required. See [PROTOCOL.md](PROTOCOL.md) sections 6.3 and 13.
 > Treat the phase plan below as historical where it mentions report `0x08`.
 >
-> **Phase 2 status (2026-11-01): implemented, but not applicable to the K622.**
-> `k622rgb calibrate`, `k622rgb list`, `layout.json` loading/merging, and the
-> G/MR/media aliases exist and are unit-tested. Hardware calibration then
-> showed that the K622's G1–G4/MR/RGB/media keys have no individually
-> addressable RGB LEDs; slots `102–125` and the 15 `Cfg.ini` gaps are
-> duplicate/dead matrix positions (slot 105 = LCtrl, slot 6 = F5). The
-> calibrate command remains for sibling Sinowealth variants; on the K622 the
-> RGB set is the 87 main keys only.
+> **Phase 2 removed (2026-11-01).** Hardware testing showed that the K622's
+> G1–G4/MR/RGB/media keys have no individually addressable RGB LEDs; slots
+> `102–125` and the 15 `Cfg.ini` gaps are duplicate/dead matrix positions
+> (slot 105 = LCtrl, slot 6 = F5). The calibration command, `layout.json`
+> loading and the extra-key aliases were removed from the CLI. The RGB set is
+> the 87 main keys only. The historical calibration material below is kept for
+> context and does not describe the current tool.
 >
 > **Phase 3 status (2026-11-01): implemented.** The built-in effects are driven
 > by the keyboard itself, not host-side animation: `mode`, `color`, `config`
@@ -67,7 +66,6 @@ keyboard_RGB_controller/
 │   ├── colors.py               # hex / named / r,g,b parsing
 │   ├── profiles.py             # profile + state JSON storage
 │   ├── effects.py              # static/breathing/rainbow/wave
-│   ├── calibrate.py            # interactive slot discovery
 │   └── doctor.py               # diagnostics
 ├── udev/
 │   └── 60-k622rgb.rules
@@ -98,11 +96,10 @@ keyboard_RGB_controller/
 | Module | Responsibility |
 |---|---|
 | `controller.py` | Find IF1, open hidraw, build/validate the 382-byte frame, send `HIDIOCSFEATURE`. Only public write API is `send_led_frame()`. |
-| `layout.py` | Static map for slots `0–101`; load calibrated extras from `layout.json`; key alias lookup; dead-slot handling. |
+| `layout.py` | Static main-key map and aliases for slots `0–101`. |
 | `colors.py` | Parse `#RRGGBB`, `RRGGBB`, `r,g,b`, named colors; apply brightness; HSV helpers for effects. |
 | `profiles.py` | Read/write profile JSON and `state.json` atomically; list/save/load/delete. |
 | `effects.py` | Generate a 126-slot frame for a given time; run the foreground frame loop. |
-| `calibrate.py` | Interactive slot-by-slot discovery; write `layout.json`; verify mode. |
 | `doctor.py` | Check device presence, permissions, ioctl, descriptor, packet size, udev rule. |
 | `cli.py` | Parse commands, route to modules, consistent errors/exit codes. |
 
@@ -189,7 +186,7 @@ def send_led_frame(fd: int, packet: bytes) -> None:
 
 | Command | Purpose |
 |---|---|
-| `k622rgb list` | Print slot→key map, dead slots, calibration status |
+| `k622rgb list` | Print the main-key LED map and duplicate/dead slots |
 | `k622rgb info` | Device path, interface, permissions, packet size |
 | `k622rgb doctor` | Diagnose device/udev/ioctl problems |
 | `k622rgb set <color>` | Set all keys |
@@ -207,8 +204,6 @@ def send_led_frame(fd: int, packet: bytes) -> None:
 | `k622rgb effect breathing --color <c> --speed <n>` | Breathing |
 | `k622rgb effect rainbow --speed <n>` | Rainbow |
 | `k622rgb effect wave --speed <n>` | Spatial wave |
-| `k622rgb calibrate` | Interactive extra-slot discovery |
-| `k622rgb calibrate --verify` | Light each mapped key in sequence |
 | `k622rgb probe ...` | Phase 0 hardware probe (kept as a diagnostic command) |
 | `k622rgb install-udev` | Print the udev rule and install commands |
 
@@ -241,8 +236,6 @@ k622rgb effect breathing --color cyan --speed 1.2
 k622rgb effect rainbow --speed 0.8
 k622rgb effect wave --speed 1.0
 
-k622rgb calibrate
-k622rgb calibrate --verify
 k622rgb doctor
 ```
 
@@ -530,7 +523,7 @@ of the official Windows software or further static analysis.
 | Test file | Coverage |
 |---|---|
 | `test_packet.py` | 382-byte length, header, RGB order, zero fill, slot offsets |
-| `test_layout.py` | 87 keys, dead slots, aliases, calibration merge, duplicates |
+| `test_layout.py` | 87 keys, dead slots, aliases, numeric slots |
 | `test_colors.py` | Hex, named, `r,g,b`, invalid input, brightness scaling |
 | `test_profiles.py` | Round-trip, atomic write, invalid JSON, missing fields |
 | `test_effects.py` | Deterministic frames for a given time; speed/brightness |

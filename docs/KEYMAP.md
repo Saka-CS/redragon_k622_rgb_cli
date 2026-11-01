@@ -159,38 +159,11 @@ Slots `102–125` are duplicate/dead matrix positions, not the extra keys:
 Consequences:
 
 - The K622 RGB set is the **87 main keys only**.
-- `k622rgb calibrate` is retained for sibling Sinowealth variants, but it is
-  **not needed for K622 RGB**. Leave `~/.config/k622rgb/layout.json` absent.
-- Running it on the K622 will record duplicate main-key names or dead slots,
-  which `list` then flags as `(main key!)`.
+- There is no calibration command in the CLI; the 87 main keys are the RGB
+  set. Extra-key names such as `G1`/`MR`/`RGB` are rejected by `set`.
 - `k622rgb set G1=...`, `MR=...`, `RGB=...`, `Prev=...`, `Play=...`,
   `Next=...`, `Mute=...` and `Volume=...` are not meaningful on this board.
   The numeric `slot:N` escape remains available for diagnostics only.
-
-## Calibration output (sibling variants)
-
-`k622rgb calibrate` writes `~/.config/k622rgb/layout.json` for Sinowealth
-variants that do have extra RGB keys. On the K622, leave the file absent: there
-are no extra RGB slots to map. The schema is:
-
-```json
-{
-  "version": 1,
-  "slots": {
-    "102": "G1",
-    "103": "G2",
-    "104": "MR"
-  }
-}
-```
-
-Rules:
-
-- `""` means “calibrated as dead”.
-- A missing slot means “not yet calibrated”.
-- The file is optional; without it, only slots `0–101` are addressable.
-- The file's slot range is `102–125`; on the K622 those are duplicate/dead
-  positions, not RGB extras.
 
 ## Aliases
 
@@ -221,7 +194,7 @@ Key lookup is case-insensitive. The following aliases are accepted:
 | `-` | `Minus`, `Hyphen` |
 | `=` | `Equals` |
 | `Up` / `Down` / `Left` / `Right` | `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight` |
-| `G1`–`G4`, `MR`, `RGB`, `Prev`, `Play`, `Next`, `Mute`, `Volume` | Sibling-variant calibration only; not RGB keys on the K622 |
+| `G1`–`G4`, `MR`, `RGB`, `Prev`, `Play`, `Next`, `Mute`, `Volume` | Rejected: not RGB keys on the K622 |
 
 ## Machine-readable map
 

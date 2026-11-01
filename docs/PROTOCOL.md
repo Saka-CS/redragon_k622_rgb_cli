@@ -200,7 +200,7 @@ profile/keymap table is never written.
 ```text
 SET5  05 83 c6 00 00 00          # ask for the config
 GET6  06 83 c6 ... (262 bytes)   # config read-back
-SET6  06 09 cc 00 40 ...         # colour frame (the only write this tool sends)
+SET6  06 09 cc 00 40 ...         # colour frame
 SET6  06 09 d0 00 40 ...         # constant latch/effect frame
 SET6  06 03 c6 00 00 ...         # constant config frame
 ```
@@ -273,7 +273,7 @@ timeout.
 The 2026-11-01 usbmon capture confirms the 1032-byte buffer, the three
 126-byte planes, the `09 cc` colour header, and the repeated
 `09 cc` → `09 d0` → `03 c6` sequence. The remaining gates are hardware
-verification of the write and calibration of slots `102–125`.
+verification of the write. Slots `102–125` are duplicate/dead and have no extra RGB keys.
 
 ## 8. Transport
 
@@ -401,20 +401,16 @@ bytes, with slot 0 first in each plane.
 | 20 effects + Self-define + OFF | **Confirmed on hardware** |
 | Brightness 0–9 / speed 1–4 | **Confirmed on hardware** |
 | Official UI option set | **Confirmed under Wine 11** |
-| Extra slots `102–125` | **Pending calibration** |
-| Persistence of config/palette | **Confirmed across reads/writes** (power-cycle test still pending) |
+| Extra slots `102–125` | **Duplicate/dead**; no extra RGB keys |
+| Persistence of config/palette | **Confirmed across a power cycle** |
 
 ## 13. Next steps
 
 The capture and hardware-write gates are closed. Remaining work:
 
-1. Calibrate slots `102–125` (G/MR/media keys) by writing `slot:N=ffffff` and
-   recording which physical key lights.
-2. Optionally test persistence across a full power cycle (replug is already
-   handled; the writing path is the same one the official app uses).
-3. Investigate whether the key-group (`GaoshouKey*`) game-mode highlighting is
+1. Investigate whether the key-group (`GaoshouKey*`) game-mode highlighting is
    an RGB feature on this model; it is not exposed by the lighting tab.
-4. Optional: daemon/IPC or reactive key effects (out of the current scope).
+2. Optional: daemon/IPC or reactive key effects (out of the current scope).
 
 Do not send `09 d0`, `03 c6`, or `04 d8` unless a new, captured need appears.
 
@@ -441,7 +437,7 @@ A no-op round trip was verified: read, write unchanged, read again returns the
 same 262 bytes. The current mode is byte `0x0D`; the per-key flag is byte
 `0x0C`; the 20 effect parameter pairs start at `0x1E`. Each pair is
 `[colour, (speed << 4) | brightness]`; colour `0..6` selects a palette entry
-and `7` means random. The `5a a5` marker sits at `0x46`.
+and `7` means random. The `5a a5` marker sits at `0x46` in the older 20-mode layout or `0x81` in the factory-default extended layout; `Fn+Esc` switches between them and both are accepted.
 
 ### 14.2 Effect palette
 

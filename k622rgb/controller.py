@@ -695,6 +695,7 @@ CONFIG_PAIR_BASE = 0x1E
 CONFIG_PAIR_COUNT = 20
 CONFIG_TRAILER = bytes.fromhex("5a a5")
 CONFIG_TRAILER_INDEX = 0x46
+CONFIG_TRAILER_INDEX_ALT = 0x81
 CONFIG_READ_RESPONSE_SIZE = 262
 
 COLOR_WRITE_HEADER = bytes.fromhex("06 08 c8 00 40 00 00 00")
@@ -954,10 +955,16 @@ def validate_config(config) -> bytes:
         raise ConfigError(
             "refusing config without the captured 03 03 marker at offset 0x08"
         )
-    if config[CONFIG_TRAILER_INDEX:CONFIG_TRAILER_INDEX + 2] != CONFIG_TRAILER:
+    if (
+        config[CONFIG_TRAILER_INDEX:CONFIG_TRAILER_INDEX + 2] != CONFIG_TRAILER
+        and config[
+            CONFIG_TRAILER_INDEX_ALT:CONFIG_TRAILER_INDEX_ALT + 2
+        ] != CONFIG_TRAILER
+    ):
         raise ConfigError(
-            "refusing config without the captured 5a a5 marker at offset 0x%02x"
-            % CONFIG_TRAILER_INDEX
+            "refusing config without the captured 5a a5 marker at offset "
+            "0x%02x or 0x%02x"
+            % (CONFIG_TRAILER_INDEX, CONFIG_TRAILER_INDEX_ALT)
         )
     mode = config[CONFIG_MODE_INDEX]
     if mode > MAX_MODE:

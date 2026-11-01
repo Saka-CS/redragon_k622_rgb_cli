@@ -1,6 +1,5 @@
 import contextlib
 import io
-import json
 import os
 import shutil
 import unittest
@@ -47,9 +46,6 @@ class CliTests(unittest.TestCase):
             interface="01",
             hid_id="0003:0000258A:00000049",
         )
-        self.layout_path = self.root / "layout.json"
-        layout.clear_calibration_cache()
-        self.addCleanup(layout.clear_calibration_cache)
 
     def run_cli(
         self,
@@ -91,7 +87,6 @@ class CliTests(unittest.TestCase):
                     os.environ,
                     {
                         "XDG_STATE_HOME": str(self.root / "state"),
-                        layout.LAYOUT_FILE_ENV: str(self.layout_path),
                     },
                 )
             )
@@ -290,7 +285,7 @@ class CliTests(unittest.TestCase):
     def test_set_sends_frame_and_saves_state(self):
         state_path = self.state_file()
         code, out, _err, opener, _reader, writer = self.run_cli(
-            ["set", "--state", state_path, "Esc=red"]
+            ["set", "--no-activate", "--state", state_path, "Esc=red"]
         )
         self.assertEqual(code, 0)
         self.assertIn("sent 1032-byte report 0x06 lighting frame", out)
@@ -306,9 +301,9 @@ class CliTests(unittest.TestCase):
 
     def test_set_accumulates_from_saved_frame(self):
         state_path = self.state_file()
-        self.run_cli(["set", "--state", state_path, "Esc=red"])
+        self.run_cli(["set", "--no-activate", "--state", state_path, "Esc=red"])
         _code, _out, _err, _opener, _reader, writer = self.run_cli(
-            ["set", "--state", state_path, "1=green"]
+            ["set", "--no-activate", "--state", state_path, "1=green"]
         )
         _fd, packet = writer.call_args.args
         self.assertEqual(packet[8], 255)         # Esc red kept
@@ -317,9 +312,9 @@ class CliTests(unittest.TestCase):
 
     def test_set_off_clears_saved_frame(self):
         state_path = self.state_file()
-        self.run_cli(["set", "--state", state_path, "Esc=red"])
+        self.run_cli(["set", "--no-activate", "--state", state_path, "Esc=red"])
         _code, _out, _err, _opener, _reader, writer = self.run_cli(
-            ["set", "--state", state_path, "--off"]
+            ["set", "--no-activate", "--state", state_path, "--off"]
         )
         _fd, packet = writer.call_args.args
         self.assertEqual(packet[8:386], bytes(378))
@@ -327,9 +322,9 @@ class CliTests(unittest.TestCase):
 
     def test_set_reset_ignores_saved_frame(self):
         state_path = self.state_file()
-        self.run_cli(["set", "--state", state_path, "Esc=red"])
+        self.run_cli(["set", "--no-activate", "--state", state_path, "Esc=red"])
         _code, _out, _err, _opener, _reader, writer = self.run_cli(
-            ["set", "--state", state_path, "--reset", "1=green"]
+            ["set", "--no-activate", "--state", state_path, "--reset", "1=green"]
         )
         _fd, packet = writer.call_args.args
         self.assertEqual(packet[8], 0)           # Esc red dropped
@@ -337,7 +332,7 @@ class CliTests(unittest.TestCase):
 
     def test_set_all_fills_every_slot(self):
         code, out, _err, _opener, _reader, writer = self.run_cli(
-            ["set", "--no-state", "--all", "0000ff"]
+            ["set", "--no-activate", "--no-state", "--all", "0000ff"]
         )
         self.assertEqual(code, 0)
         _fd, packet = writer.call_args.args
@@ -346,7 +341,7 @@ class CliTests(unittest.TestCase):
 
     def test_set_allows_override_of_fill(self):
         _code, _out, _err, _opener, _reader, writer = self.run_cli(
-            ["set", "--no-state", "--all", "0000ff", "Esc=red"]
+            ["set", "--no-activate", "--no-state", "--all", "0000ff", "Esc=red"]
         )
         _fd, packet = writer.call_args.args
         self.assertEqual(packet[8], 255)
@@ -356,13 +351,23 @@ class CliTests(unittest.TestCase):
 
     def test_set_numeric_slot_syntax(self):
         code, _out, _err, _opener, _reader, writer = self.run_cli(
-            ["set", "--no-state", "slot:6=ffffff"]
+            ["set", "--no-activate", "--no-state", "slot:6=ffffff"]
         )
         self.assertEqual(code, 0)
         _fd, packet = writer.call_args.args
         self.assertEqual(packet[8 + 6], 255)
         self.assertEqual(packet[134 + 6], 255)
         self.assertEqual(packet[260 + 6], 255)
+
+    def test_set_activate_default_and_opt_out(self):
+        parser = cli.build_parser()
+        self.assertTrue(parser.parse_args(["set", "Esc=red"]).activate)
+        self.assertFalse(
+            parser.parse_args(["set", "--no-activate", "Esc=red"]).activate
+        )
+        self.assertTrue(
+            parser.parse_args(["set", "--activate", "Esc=red"]).activate
+        )
 
     def test_set_requires_something_to_do(self):
         code, _out, err, opener, _reader, writer = self.run_cli(
@@ -432,7 +437,7 @@ class CliTests(unittest.TestCase):
         state_path = self.state_file()
         Path(state_path).write_bytes(b"garbage")
         code, _out, err, opener, _reader, writer = self.run_cli(
-            ["set", "--state", state_path, "Esc=red"]
+            ["set", "--no-activate", "--state", state_path, "Esc=red"]
         )
         self.assertEqual(code, 1)
         self.assertIn("--reset", err)
@@ -441,7 +446,7 @@ class CliTests(unittest.TestCase):
 
     def test_set_write_error_is_reported(self):
         code, _out, err, _opener, _reader, _writer = self.run_cli(
-            ["set", "--no-state", "Esc=red"],
+            ["set", "--no-activate", "--no-state", "Esc=red"],
             write_error=controller.ProtocolError("keyboard said no"),
         )
         self.assertEqual(code, 1)
@@ -459,7 +464,7 @@ class CliTests(unittest.TestCase):
 
     def test_set_hex_prints_full_frame(self):
         code, out, _err, _opener, _reader, _writer = self.run_cli(
-            ["set", "--no-state", "--hex", "Esc=red"]
+            ["set", "--no-activate", "--no-state", "--hex", "Esc=red"]
         )
         self.assertEqual(code, 0)
         self.assertIn("packet: 1032 bytes", out)
@@ -475,140 +480,37 @@ class CliTests(unittest.TestCase):
 
     # -- list ------------------------------------------------------------
 
-    def write_layout(self, slots):
-        self.layout_path.write_text(
-            json.dumps({"version": 1, "slots": slots}), encoding="utf-8"
-        )
-        layout.clear_calibration_cache()
-
-    def test_list_shows_uncalibrated_extras(self):
+    def test_list_shows_main_map_and_extra_note(self):
         code, out, err, opener, reader, writer = self.run_cli(["list"])
         self.assertEqual(code, 0)
-        self.assertIn("extra slots (102-125)", out)
-        self.assertIn("102  uncalibrated", out)
-        self.assertIn("calibrated: 0 of 24", out)
+        self.assertIn("87 mapped, 15 dead", out)
+        self.assertIn("87 main keys", out)
+        self.assertIn("no individually addressable RGB LEDs", out)
+        self.assertIn("slots 102-125", out)
         opener.assert_not_called()
         reader.assert_not_called()
         writer.assert_not_called()
         self.assertEqual(err, "")
 
-    def test_list_reads_the_calibration_file(self):
-        self.write_layout({"102": "G1", "103": ""})
-        code, out, _err, _opener, _reader, _writer = self.run_cli(["list"])
-        self.assertEqual(code, 0)
-        self.assertIn("102  G1", out)
-        self.assertIn("103  dead", out)
-        self.assertIn("calibrated: 2 of 24", out)
-
-    def test_list_reads_an_explicit_layout_file(self):
-        other = self.root / "other-layout.json"
-        other.write_text(
-            json.dumps({"version": 1, "slots": {"110": "Mute"}}),
-            encoding="utf-8",
-        )
-        code, out, _err, _opener, _reader, _writer = self.run_cli(
-            ["list", "--layout", str(other)]
-        )
-        self.assertEqual(code, 0)
-        self.assertIn("110  Mute", out)
-        self.assertIn("calibrated: 1 of 24", out)
-
-    def test_list_flags_main_key_and_unexpected_labels(self):
-        self.write_layout({"102": "Esc", "103": "Bogus"})
-        code, out, _err, _opener, _reader, _writer = self.run_cli(["list"])
-        self.assertEqual(code, 0)
-        self.assertIn("102  Esc (main key!)", out)
-        self.assertIn("103  Bogus (unexpected)", out)
-        self.assertIn("calibrated: 2 of 24", out)
-
-    def test_list_all_prints_the_main_block(self):
+    def test_list_all_prints_main_block_and_extra_block(self):
         code, out, _err, _opener, _reader, _writer = self.run_cli(
             ["list", "--all"]
         )
         self.assertEqual(code, 0)
-        self.assertIn("all slots:", out)
+        self.assertIn("main block:", out)
         self.assertIn("Esc", out)
-        self.assertIn("main", out)
-        self.assertIn("uncalibrated", out)
+        self.assertIn("dead", out)
+        self.assertIn("extra block (duplicate/dead, not RGB):", out)
+        self.assertIn("102  duplicate/dead", out)
 
-    # -- calibrate -------------------------------------------------------
-
-    def test_calibrate_dry_run_touches_nothing(self):
-        code, out, _err, opener, _reader, writer = self.run_cli(
-            ["calibrate", "--dry-run"]
-        )
-        self.assertEqual(code, 0)
-        self.assertIn("dry run", out)
-        self.assertIn("slot 102: uncalibrated", out)
-        self.assertIn("would light each slot white", out)
-        opener.assert_not_called()
-        writer.assert_not_called()
-        self.assertFalse(self.layout_path.exists())
-
-    def test_calibrate_passes_its_options(self):
-        with mock.patch(
-            "k622rgb.cli.calibrate.run", return_value=0
-        ) as run:
-            code, _out, _err, _opener, _reader, _writer = self.run_cli(
-                [
-                    "calibrate",
-                    "--verify",
-                    "--start",
-                    "110",
-                    "--end",
-                    "120",
-                    "--layout",
-                    str(self.layout_path),
-                ]
-            )
-        self.assertEqual(code, 0)
-        run.assert_called_once_with(
-            start=110,
-            end=120,
-            verify=True,
-            dry_run=False,
-            node=None,
-            layout_path=str(self.layout_path),
-            verbose=False,
-        )
-
-    def test_calibrate_rejects_an_invalid_range(self):
-        code, _out, err, opener, _reader, writer = self.run_cli(
-            ["calibrate", "--dry-run", "--start", "130", "--end", "140"]
-        )
-        self.assertEqual(code, 2)
-        self.assertIn("invalid slot range", err)
-        opener.assert_not_called()
-        writer.assert_not_called()
-
-    def test_set_requires_calibration_for_extra_keys(self):
+    def test_set_rejects_extra_key(self):
         code, _out, err, opener, _reader, writer = self.run_cli(
             ["set", "--dry-run", "--no-state", "G1=red"]
         )
         self.assertEqual(code, 2)
-        self.assertIn("calibrate", err)
+        self.assertIn("not", err.lower())
         opener.assert_not_called()
         writer.assert_not_called()
-
-    def test_set_accepts_an_explicit_layout_file(self):
-        other = self.root / "other-layout.json"
-        other.write_text(
-            json.dumps({"version": 1, "slots": {"102": "G1"}}),
-            encoding="utf-8",
-        )
-        code, out, _err, _opener, _reader, _writer = self.run_cli(
-            ["set", "--dry-run", "--no-state", "--layout", str(other), "G1=red"]
-        )
-        self.assertEqual(code, 0)
-        self.assertIn("set: G1 (slot 102) = #ff0000", out)
-
-    def test_calibrated_extra_key_works_in_set(self):
-        self.write_layout({"102": "G1"})
-        code, out, _err, _opener, _reader, _writer = self.run_cli(
-            ["set", "--dry-run", "--no-state", "G1=red"]
-        )
-        self.assertEqual(code, 0)
-        self.assertIn("set: G1 (slot 102) = #ff0000", out)
 
     # -- argparse --------------------------------------------------------
 

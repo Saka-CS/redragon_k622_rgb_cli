@@ -386,7 +386,7 @@ The 611×252 layout image shows:
 | Play | Play/Pause |
 | Next | Next track |
 | Mute | Mute |
-| Volume roller | Wheel; addressability unknown |
+| Volume roller | Wheel; no addressable RGB LED observed |
 
 These are **not** in `Cfg.ini`'s `[KEY]` section, and hardware testing on
 2026-11-01 showed they have **no individually addressable RGB LEDs**: G1–G4,
@@ -492,9 +492,9 @@ on the K622 produced the 5-second `ETIMEDOUT` that motivated this pivot.
 | Read-back backup for report 6 | **Confirmed** | `05 89 cc` returns the custom frame; `set --from-device` uses it |
 | Extra keys (G/MR/media) | **Not RGB** | Stayed dark in Fixed_on and Self-define; `Cfg.ini` has no `[KEY]` entries |
 | Slots `102–125` | **Duplicate/dead** | Slot 105 = LCtrl, slot 6 = F5; no extra RGB keys |
-| Lighting persistence across power cycle | **Likely** | Config persists across writes/replugs; explicit power-cycle test still pending |
-| Built-in effect override behavior | **Unknown** | Not tested |
-| Volume roller addressability | **Unknown** | Not a key; may have no LED |
+| Lighting persistence across power cycle | **Confirmed** | Settings survived an unplug/replug power cycle |
+| Built-in effect override behavior | **Confirmed** | A `09 cc` frame is ignored while an effect is active; `set` switches to Self-define by default |
+| Volume roller addressability | **No RGB** | No addressable LED observed |
 
 ## 7. Host environment
 
@@ -548,9 +548,9 @@ future work.
    write-ahead record instead.
 3. **Extra-key addressability** — Resolved. The K622's G/MR/media keys have no
    individually addressable RGB LEDs; slots `102–125` are duplicates/dead.
-4. **Built-in effect override** — If the board is in a hardware effect, a
-   single per-key frame may be ignored or overridden. The write test will show
-   whether a mode-select command is needed.
+4. **Built-in effect override** — Resolved. A per-key `09 cc` frame is ignored
+   while an effect mode is active; `k622rgb set` now switches the board to
+   Self-define mode by default.
 5. **Persistence** — Lighting likely resets on power cycle. The tool will not
    write onboard memory unless proven safe.
 6. **udev/uaccess timing** — `TAG+="uaccess"` depends on the login seat. If the

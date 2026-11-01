@@ -5,7 +5,7 @@ Read-only commands:
 * ``info``    — resolve the device and print its HID report descriptor.
 * ``dump``    — issue ``HIDIOCGFEATURE`` for report 0x05 or 0x06.
 * ``check``   — verify discovery, permissions and the descriptor hash.
-* ``list``    — show the key map and extra-slot calibration status.
+* ``list``    — show the main-key LED map and the duplicate/dead slots.
 
 Lighting commands:
 
@@ -16,7 +16,6 @@ Lighting commands:
 * ``off``     — select the built-in OFF mode.
 * ``config``  — dump/show/restore the config, palette and custom frames.
 * ``profile`` — save/load/list/delete local lighting profiles.
-* ``calibrate`` — map the extra LED slots 102-125.
 
 Every config/palette write is preceded by a full read-back backup unless
 ``--no-backup`` is given. Writes are limited to the exact report-0x06 shapes
@@ -27,9 +26,10 @@ import argparse
 import os
 import stat
 import sys
+import time
 from typing import Dict, List, Optional, Tuple
 
-from . import __version__, calibrate, colors, controller, layout, profiles, state
+from . import __version__, colors, controller, layout, profiles, state
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -151,9 +151,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Build a 126-slot lighting frame from the captured report-0x06 "
             "'09 cc' template and send it with HIDIOCSFEATURE. Unspecified "
             "keys keep the colour from the last frame this tool saved, or "
-            "stay black on the first run. The descriptor must match the "
-            "captured K622 IF1 hash. Use --dry-run to print the exact frame "
-            "without opening the device."
+            "stay black on the first run. The keyboard is switched to "
+            "Self-define mode by default, because per-key frames are ignored "
+            "in an effect mode; use --no-activate to leave the current mode. "
+            "The descriptor must match the captured K622 IF1 hash. Use "
+            "--dry-run to print the exact frame without opening the device."
         ),
     )
     _add_global_flags(set_parser, suppress_defaults=True)
@@ -195,19 +197,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the full 1032-byte frame even when writing",
     )
     set_parser.add_argument(
-        "--layout",
-        metavar="FILE",
-        help="read extra-key names from FILE instead of the XDG config path",
-    )
-    set_parser.add_argument(
         "--from-device",
         action="store_true",
         help="start from the custom frame read back from the keyboard (09 cc)",
     )
     set_parser.add_argument(
         "--activate",
+        dest="activate",
         action="store_true",
-        help="switch the keyboard to Self-define mode after writing the frame",
+        default=True,
+        help="switch to Self-define mode after writing the frame (default)",
+    )
+    set_parser.add_argument(
+        "--no-activate",
+        dest="activate",
+        action="store_false",
+        help="leave the current lighting mode unchanged",
     )
     set_parser.add_argument(
         "--brightness",
@@ -219,66 +224,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser(
         "list",
-        help="show key names and extra-slot calibration status",
+        help="show the main-key LED map",
         description=(
-            "Print the calibration file location, the main-key summary and "
-            "the state of every extra slot 102-125. Use --all to print the "
-            "full 126-slot table. Reads no feature reports."
+            "Print the 87 main-key LED map and the duplicate/dead slots. The "
+            "K622's G1-G4/MR/RGB/media keys are not RGB. Reads no feature "
+            "reports."
         ),
     )
     _add_global_flags(list_parser, suppress_defaults=True)
     list_parser.add_argument(
         "--all",
         action="store_true",
-        help="print every slot, including the 87 main keys",
-    )
-    list_parser.add_argument(
-        "--layout",
-        metavar="FILE",
-        help="read calibration from FILE instead of the XDG config path",
+        help="print every slot, including the duplicate/dead extra slots",
     )
     list_parser.set_defaults(func=cmd_list)
-
-    calibrate_parser = subparsers.add_parser(
-        "calibrate",
-        help="map extra LED slots 102-125 (sibling variants; not needed on K622)",
-        description=(
-            "Light one extra slot at a time and ask which key lit up. Answers "
-            "are saved to layout.json after every slot, so quitting keeps "
-            "progress. Use --verify to light the slots that are already "
-            "mapped. On the K622 the G1-G4/MR/RGB/media keys have no "
-            "individually addressable RGB LEDs and slots 102-125 are "
-            "duplicate/dead, so this command is only useful for sibling "
-            "Sinowealth variants. The last saved frame is restored when "
-            "calibration ends."
-        ),
-    )
-    _add_global_flags(calibrate_parser, suppress_defaults=True)
-    calibrate_parser.add_argument(
-        "--verify",
-        action="store_true",
-        help="light each calibrated extra slot in sequence",
-    )
-    calibrate_parser.add_argument(
-        "--start",
-        type=int,
-        default=layout.EXTRA_SLOT_START,
-        metavar="SLOT",
-        help="first slot to calibrate (default: %d)" % layout.EXTRA_SLOT_START,
-    )
-    calibrate_parser.add_argument(
-        "--end",
-        type=int,
-        default=layout.EXTRA_SLOT_END,
-        metavar="SLOT",
-        help="last slot to calibrate (default: %d)" % layout.EXTRA_SLOT_END,
-    )
-    calibrate_parser.add_argument(
-        "--layout",
-        metavar="FILE",
-        help="use FILE for calibration instead of the XDG config path",
-    )
-    calibrate_parser.set_defaults(func=cmd_calibrate)
 
     mode_parser = subparsers.add_parser(
         "mode",
@@ -823,10 +782,7 @@ def cmd_set(args: argparse.Namespace) -> int:
     if args.brightness is not None and not 0 <= args.brightness <= 9:
         raise ValueError("--brightness must be 0..9")
 
-    layout_path = (
-        os.path.expanduser(args.layout) if args.layout else None
-    )
-    changes = _parse_assignments(args.assignments, layout_path)
+    changes = _parse_assignments(args.assignments)
     if not (changes or args.fill is not None or args.off):
         raise ValueError(
             "nothing to set: give KEY=COLOR, --all COLOR, or --off"
@@ -889,7 +845,7 @@ def cmd_set(args: argparse.Namespace) -> int:
         print(
             "set: %s (slot %d) = %s"
             % (
-                layout.canonical_name(slot, layout_path),
+                layout.canonical_name(slot),
                 slot,
                 colors.format_color(changes[slot]),
             )
@@ -942,22 +898,49 @@ def cmd_set(args: argparse.Namespace) -> int:
     )
 
     fd = controller.open_device(node, writable=True)
+    activation_backup = None
+    activation_needed = False
+    activation_failed = False
     try:
-        controller.write_feature(fd, packet)
-        activation_backup = None
+        # Read the config before writing the colour frame. The keyboard can
+        # stall a report-5 mailbox command if it arrives immediately after a
+        # 09 cc transfer, so do the read first and reuse the result.
         if args.activate:
             current = controller.read_config(fd)
             parsed = controller.parse_config(current)
-            if parsed.mode != controller.PER_KEY_MODE or not parsed.per_key:
+            activation_needed = (
+                parsed.mode != controller.PER_KEY_MODE or not parsed.per_key
+            )
+            if activation_needed:
                 activation_backup = _save_lighting_backup(
                     fd, data, "activate per-key"
                 )
+        frame_written = False
+        try:
+            controller.write_feature(fd, packet)
+            frame_written = True
+            if activation_needed:
+                time.sleep(0.05)
                 controller.write_config(
                     fd,
                     controller.build_config(
                         current, mode=controller.PER_KEY_MODE
                     ),
                 )
+        except controller.DeviceError as exc:
+            if frame_written and activation_needed:
+                activation_failed = True
+                print(
+                    "warning: colour frame sent, but switching to "
+                    "Self-define mode failed: %s" % exc,
+                    file=sys.stderr,
+                )
+                print(
+                    "warning: run `k622rgb mode set per-key` and retry",
+                    file=sys.stderr,
+                )
+            else:
+                raise
     finally:
         try:
             os.close(fd)
@@ -973,7 +956,9 @@ def cmd_set(args: argparse.Namespace) -> int:
         )
     )
     if args.activate:
-        if activation_backup:
+        if activation_failed:
+            pass
+        elif activation_backup:
             print("activated Self-define mode; backup: %s" % activation_backup)
         else:
             print("Self-define mode already active")
@@ -985,74 +970,47 @@ def cmd_set(args: argparse.Namespace) -> int:
             print("saved frame to %s" % state_path)
         except state.StateError as exc:
             print("warning: %s" % exc, file=sys.stderr)
-    return EXIT_OK
+    return EXIT_ERROR if activation_failed else EXIT_OK
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    path = (
-        os.path.expanduser(args.layout)
-        if args.layout
-        else layout.default_layout_path()
-    )
-    calibration = layout.load_calibration(path)
-    print("layout file: %s%s" % (path, "" if os.path.exists(path) else " (not created yet)"))
     print(
-        "main keys: %d mapped, %d dead (slots 0-101)"
+        "main keys: %d mapped, %d dead slots (0-101)"
         % (len(layout.SLOT_NAMES), len(layout.DEAD_SLOTS))
     )
     print()
-    print("extra slots (%d-%d):" % (layout.EXTRA_SLOT_START, layout.EXTRA_SLOT_END))
-    calibrated = 0
-    for slot in layout.EXTRA_SLOTS:
-        value = calibration.get(slot)
-        if value is not None:
-            calibrated += 1
-        print("  %3d  %s" % (slot, _label(value)))
-    print()
+    print("the K622 RGB set is the 87 main keys;")
     print(
-        "calibrated: %d of %d extra slots"
-        % (calibrated, len(layout.EXTRA_SLOTS))
+        "G1-G4, MR, the RGB toggle, Previous, Play/Pause, Next and Mute have "
+        "no individually addressable RGB LEDs."
     )
     print(
-        "note: on the K622 the G1-G4/MR/RGB/media keys have no individually "
-        "addressable RGB LEDs;"
+        "slots 102-125 and the 15 Cfg.ini gaps are duplicate/dead matrix "
+        "positions, not extra RGB keys."
     )
-    print(
-        "      slots 102-125 are duplicate/dead matrix positions, not RGB keys."
-    )
-
     if args.all:
         print()
-        print("all slots:")
-        for slot in range(controller.NUM_SLOTS):
+        print("main block:")
+        for slot in range(0, layout.EXTRA_SLOT_START):
+            name = layout.SLOT_NAMES.get(slot)
             print(
                 "  %3d  %-12s %s"
-                % (slot, layout.canonical_name(slot, path), layout.slot_status(slot, path))
+                % (slot, name or "-", "main" if name else "dead")
             )
+        print()
+        print("extra block (duplicate/dead, not RGB):")
+        for slot in layout.EXTRA_SLOTS:
+            print("  %3d  duplicate/dead" % slot)
     return EXIT_OK
-
-
-def cmd_calibrate(args: argparse.Namespace) -> int:
-    return calibrate.run(
-        start=args.start,
-        end=args.end,
-        verify=args.verify,
-        dry_run=args.dry_run,
-        node=args.device,
-        layout_path=args.layout,
-        verbose=args.verbose,
-    )
-
-
-def _label(value: Optional[str]) -> str:
-    return layout.describe_value(value)
 
 
 def _all_black() -> Dict[int, controller.Color]:
     return {slot: (0, 0, 0) for slot in range(controller.NUM_SLOTS)}
 
 
-def _scale_colors(colors: Dict[int, controller.Color], level: int) -> Dict[int, controller.Color]:
+def _scale_colors(
+    colors: Dict[int, controller.Color], level: int
+) -> Dict[int, controller.Color]:
     """Scale every channel by an integer brightness level 0..9."""
     factor = level / 9.0
     return {
@@ -1068,7 +1026,7 @@ def _state_path(args: argparse.Namespace) -> str:
 
 
 def _parse_assignments(
-    items: List[str], layout_path: Optional[str] = None
+    items: List[str],
 ) -> Dict[int, controller.Color]:
     changes = {}
     for item in items:
@@ -1082,7 +1040,7 @@ def _parse_assignments(
                 "missing key before '=' in %r (use Equals=ff0000 for the = key)"
                 % item
             )
-        slot = layout.resolve_key(key_text, layout_path)
+        slot = layout.resolve_key(key_text)
         changes[slot] = colors.parse_color(color_text)
     return changes
 
@@ -1822,9 +1780,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("k622rgb: %s" % exc, file=sys.stderr)
         return EXIT_ERROR
     except state.StateError as exc:
-        print("k622rgb: %s" % exc, file=sys.stderr)
-        return EXIT_ERROR
-    except layout.LayoutError as exc:
         print("k622rgb: %s" % exc, file=sys.stderr)
         return EXIT_ERROR
     except profiles.ProfileError as exc:

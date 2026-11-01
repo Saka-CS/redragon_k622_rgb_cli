@@ -25,7 +25,7 @@ def base_config(mode=21, per_key=True):
         controller.CONFIG_TRAILER_INDEX:
         controller.CONFIG_TRAILER_INDEX + 2
     ] = controller.CONFIG_TRAILER
-    config[0x84:0x86] = b"\x5a\xa5"
+    config[0x81:0x83] = b"\x5a\xa5"
     config[0x86:0x88] = b"\x03\x03"
     return bytes(config)
 
@@ -113,8 +113,17 @@ class ConfigTests(unittest.TestCase):
     def test_validate_rejects_bad_markers(self):
         config = bytearray(base_config())
         config[controller.CONFIG_TRAILER_INDEX] = 0
+        config[controller.CONFIG_TRAILER_INDEX_ALT] = 0
         with self.assertRaises(controller.ConfigError):
             controller.validate_config(bytes(config))
+
+    def test_factory_default_marker_layout(self):
+        config = bytearray(base_config())
+        config[controller.CONFIG_TRAILER_INDEX] = 0
+        config[controller.CONFIG_TRAILER_INDEX + 1] = 0
+        config[controller.CONFIG_TRAILER_INDEX_ALT:
+               controller.CONFIG_TRAILER_INDEX_ALT + 2] = b"\x5a\xa5"
+        self.assertEqual(controller.validate_config(bytes(config)), bytes(config))
         with self.assertRaises(controller.ConfigError):
             controller.validate_config(base_config()[:100])
 

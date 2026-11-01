@@ -29,8 +29,7 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
   entries for them; slots `102-125` are duplicate/dead positions.
 - Calibration: retained for sibling Sinowealth variants; **not needed on the
   K622**. The RGB set is the 87 main keys.
-- Remaining work: optional game-mode/dynamic effects, a power-cycle test, or a
-  daemon.
+- Remaining work: optional game-mode/dynamic effects, or a daemon.
 - Commits: hardware gate passed.
 
 ## Short version
@@ -72,7 +71,7 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 ./bin/k622rgb mode set per-key
 ./bin/k622rgb set --dry-run --no-state Esc=red           # print exact frame
 ./bin/k622rgb set --from-device 1=green                  # additive from device
-./bin/k622rgb set --activate Esc=red                     # switch to Self-define
+./bin/k622rgb set --no-activate Esc=red                  # leave the current mode
 ./bin/k622rgb set Esc=red                                # write (hash checked)
 ./bin/k622rgb set 1=green                                 # additive with saved frame
 ./bin/k622rgb set --off                                   # all LEDs off
@@ -80,12 +79,10 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 ./bin/k622rgb profile save gaming                         # local lighting profile
 ./bin/k622rgb profile load gaming
 ./bin/k622rgb profile list
-./bin/k622rgb list                                        # calibration status
-./bin/k622rgb calibrate                                   # sibling variants only (not needed on K622)
-./bin/k622rgb calibrate --verify                          # sibling variants only
+./bin/k622rgb list                                        # main-key LED map
 ```
 
-## Extra keys / calibration
+## Extra keys
 
 The K622's G1–G4, MR, RGB toggle, Previous, Play/Pause, Next, Mute and volume
 roller **do not have individually addressable RGB LEDs**. They stayed dark in
@@ -95,8 +92,8 @@ set.
 
 Slots `102–125` and the 15 `Cfg.ini` gaps are duplicate/dead matrix positions,
 not extra RGB keys. Tested examples: slot `105` lights LCtrl, slot `6` lights
-F5. `k622rgb calibrate` is retained for sibling Sinowealth variants but is not
-needed on the K622; leave `~/.config/k622rgb/layout.json` absent.
+F5. There is no calibration command in the CLI; the 87 main keys are the RGB
+set.
 
 The numeric `slot:N` escape remains useful for diagnostics:
 
@@ -106,6 +103,17 @@ The numeric `slot:N` escape remains useful for diagnostics:
 ```
 
 `k622rgb set G1=red`, `MR=blue`, etc. are not meaningful on this board.
+
+## Factory reset and mode notes
+
+- `Fn+Esc` resets the keyboard and changes the stored config layout: the
+  `5a a5` marker moves from `0x46` to `0x81`. The tool accepts both layouts,
+  so `mode`, `color`, `config` and `set` keep working after a reset.
+- Per-key `09 cc` frames are ignored while an effect mode is active. `set`
+  therefore switches to **Self-define** mode by default; use
+  `set --no-activate` if you want to leave the current effect running.
+- The K622's G1-G4, MR, RGB/media keys and volume roller are not RGB. There is
+  no extra-key calibration command; the 87 main keys are the RGB set.
 
 ## Profiles
 
@@ -124,9 +132,9 @@ profiles; the keyboard's keymap/macro table is never written.
 ./bin/k622rgb profile delete gaming
 ```
 
-`info`, `dump`, `check`, and `list` are read-only. `set` and `calibrate` send
-only the captured `09 cc` report-6 frame; `calibrate` also restores the last
-saved frame when it finishes. `mode`, `color`, `config` and `off` use the
+`info`, `dump`, `check`, and `list` are read-only. `set` sends the captured
+`09 cc` report-6 frame and switches to Self-define mode by default (use
+`--no-activate` to skip that). `mode`, `color`, `config` and `off` use the
 verified configuration mailbox (`05 83 c6` / `05 88 c8`) and the captured
 `03 c6` / `08 c8` write shapes. Every config/palette write saves a full backup
 first. `set` saves the frame it last wrote under the XDG state directory so

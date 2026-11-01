@@ -98,11 +98,14 @@ Layout of the 136-byte block:
 | `0x0D` | current mode (`0`–`21`) |
 | `0x1E + 2*(mode-1)` | effect colour byte (`0`–`6`, `7` = random) |
 | `0x1F + 2*(mode-1)` | speed/brightness byte: `(speed << 4) | brightness` |
-| `0x46` | `5a a5` marker |
+| `0x46` or `0x81` | `5a a5` marker. The older 20-mode layout uses `0x46`; the factory-default layout extends the mode table and uses `0x81`. Both are accepted. |
 
-The 20 effect parameter pairs occupy `0x1E..0x45`. A no-op round trip was
-verified on hardware: reading the config, writing it back unchanged, and
-reading it again returns the same bytes.
+The 20 effect parameter pairs used by the K622 occupy `0x1E..0x45`; the
+factory-default layout has additional pairs beyond them. A no-op round trip
+was verified on hardware: reading the config, writing it back unchanged, and
+reading it again returns the same bytes. `Fn+Esc` factory reset changes the
+layout from the 20-mode form (marker at `0x46`) to the extended form (marker at
+`0x81`); both are supported.
 
 ## 4. Effect palette — `08 c8`
 
@@ -134,9 +137,11 @@ Write it with report `0x06`:
 ```
 
 The firmware stores the palette byte-for-byte; a write/read round trip was
-verified. The default palette is
+verified. A typical factory palette is
 `#ff0000 #0000ff #00ff00 #ffff00 #ff00ff #00ffff #ffffff`
-(red, blue, green, yellow, magenta, cyan, white).
+(red, blue, green, yellow, magenta, cyan, white), but the order can differ
+after a `Fn+Esc` factory reset. Always read the live palette with
+`k622rgb color show <mode>`.
 
 The official app's **RGB** checkbox is the random mode (`colour byte = 7`).
 Unchecking it and applying a custom colour writes that colour to palette
@@ -144,7 +149,9 @@ entry 0 and selects entry 0.
 
 ## 5. Per-key frame — `09 cc`
 
-The existing per-key path is unchanged:
+The per-key path is unchanged in wire format. `k622rgb set` switches the board
+to Self-define mode by default, because per-key frames are ignored while an
+effect mode is active; use `--no-activate` to leave the current mode.
 
 ```text
 06 09 cc 00 40 00 00 00 <1024-byte payload> (1032 bytes total)
@@ -213,7 +220,7 @@ k622rgb mode set neon-stream --random
 
 # per-key
 k622rgb mode set per-key
-k622rgb set --from-device Esc=ff0000 1=00ff00 --activate
+k622rgb set --from-device Esc=ff0000 1=00ff00
 
 # palette entry 2 of mode 7
 k622rgb color set ripples-shining 2 00ffff
@@ -254,6 +261,6 @@ k622rgb profile delete gaming
   by `k622rgb`.
 - The `84 d8` profile table contains keymaps/macros. It is dumped read-only
   but never written.
-- Extra LED slots `102–125` still need `k622rgb calibrate`.
+- Extra LED slots `102–125` are duplicate/dead; there are no extra RGB keys to calibrate.
 - Firmware update, bootloader, flash and macro/keymap writes remain out of
   scope.
