@@ -16,6 +16,19 @@ keyboard, modeled on
 > both, and `set --off` cleared the board. The `09 d0`/`03 c6` companions are
 > not required. See [PROTOCOL.md](PROTOCOL.md) sections 6.3 and 13.
 > Treat the phase plan below as historical where it mentions report `0x08`.
+>
+> **Phase 2 status (2026-11-01): implemented.** `k622rgb calibrate`,
+> `k622rgb list`, `layout.json` loading/merging, and the G/MR/media aliases
+> exist and are unit-tested; the physical slot answers still have to be
+> recorded on the board with `k622rgb calibrate`.
+>
+> **Phase 3 status (2026-11-01): implemented.** The built-in effects are driven
+> by the keyboard itself, not host-side animation: `mode`, `color`, `config`
+> and `off` use the verified `83 c6`/`03 c6` config mailbox and the
+> `88 c8`/`08 c8` effect palette. Brightness `0–9`, speed `1–4`, random or one
+> of seven per-mode colours, Self-define and OFF all work on hardware. Every
+> write is preceded by a full config/palette backup; `config restore` is the
+> recovery path. See [RGB_MODES.md](RGB_MODES.md).
 
 ## 1. Confirmed scope
 

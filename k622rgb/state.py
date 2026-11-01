@@ -1,9 +1,10 @@
 """Local state for one-shot frames.
 
-The K622 cannot read back its current LED buffer (feature report ``0x06`` GET
-stalls without the official read handshake). To make successive ``set`` calls
-additive, the tool saves the exact frame it last wrote and uses it as the base
-for the next call. This is a record of what *we* sent, not a device read-back.
+The K622 can read its custom per-key frame back with the vendor mailbox
+(``05 89 cc`` -> report 6), but older tool versions only had a local
+write-ahead record. ``set`` still saves the exact frame it last wrote and uses
+it as the base for the next call; ``set --from-device`` reads the device
+frame directly. This module also stores timestamped config/palette backups.
 
 Nothing here talks to the keyboard.
 """
@@ -78,3 +79,55 @@ def save_frame(path: str, data: bytes) -> None:
         raise StateError(
             "cannot save the frame to %s: %s" % (path, exc.strerror or exc)
         ) from exc
+
+
+# --------------------------------------------------------------------------
+# Device configuration backups
+# --------------------------------------------------------------------------
+
+import json
+import time
+
+
+def backup_dir() -> str:
+    """Return a new timestamped backup directory under the state directory."""
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    base = os.path.join(state_dir(), "backups")
+    path = os.path.join(base, stamp)
+    suffix = 1
+    while os.path.exists(path):
+        suffix += 1
+        path = os.path.join(base, "%s-%d" % (stamp, suffix))
+    return path
+
+
+def save_backup(files: dict, meta: dict) -> str:
+    """Atomically write a set of named blobs plus ``meta.json``.
+
+    Returns the backup directory.  The caller supplies ``files`` as
+    ``{filename: bytes}``; names are validated so a backup cannot escape its
+    directory.
+    """
+    path = backup_dir()
+    try:
+        os.makedirs(path, exist_ok=False)
+        for name, data in files.items():
+            if not name or "/" in name or name in (".", ".."):
+                raise StateError("invalid backup filename %r" % (name,))
+            with open(os.path.join(path, name), "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+        payload = dict(meta)
+        payload.setdefault("version", 1)
+        payload.setdefault("created", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        with open(os.path.join(path, "meta.json"), "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError as exc:
+        raise StateError(
+            "cannot write backup to %s: %s" % (path, exc.strerror or exc)
+        ) from exc
+    return path

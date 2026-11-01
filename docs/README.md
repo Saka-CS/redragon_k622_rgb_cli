@@ -8,7 +8,8 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 | Document | Contents |
 |---|---|
 | [FINDINGS.md](FINDINGS.md) | Device identification, official-software analysis, hardware recon evidence, open questions |
-| [PROTOCOL.md](PROTOCOL.md) | USB/HID details, declared reports, verified read path, write-capture gate |
+| [PROTOCOL.md](PROTOCOL.md) | USB/HID details, declared reports, verified read/write paths, config mailbox |
+| [RGB_MODES.md](RGB_MODES.md) | All 20 effects, Self-define/OFF, brightness/speed, palette, per-key frames |
 | [KEYMAP.md](KEYMAP.md) | Full 126-slot LED map, dead slots, calibration template |
 | [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | Phased plan, architecture, CLI, testing, acceptance criteria |
 
@@ -18,10 +19,15 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 - Read-only hardware recon: **verified** on the physical K622.
 - Lighting-write capture: **complete** (13 full `09 cc` → `09 d0` → `03 c6`
   updates in a binary usbmon capture).
-- Lighting writes: **implemented and verified on hardware**. The captured
-  `09 cc` colour frame is sufficient; the `09 d0`/`03 c6` companions are not
-  needed.
-- Remaining work: calibrate slots `102–125` and decide on effects/profiles.
+- Per-key writes: **implemented and verified on hardware**.
+- Built-in effects, brightness/speed, effect palette and Self-define/OFF:
+  **implemented and verified on hardware** (config `03 c6` round trip,
+  `08 c8` palette write, `05 83 c6`/`05 88 c8` reads).
+- Official UI: **verified under Wine 11** (mode list, sliders, colour picker).
+- Calibration: **implemented** (`calibrate`, `layout.json`, extra-key aliases);
+  the physical slot map still has to be recorded on the board.
+- Remaining work: run `k622rgb calibrate`, then optionally add game-mode
+  profiles or a daemon.
 - Commits: hardware gate passed.
 
 ## Short version
@@ -31,15 +37,18 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 - Declared vendor reports: feature `0x05` (5 bytes) and feature `0x06`
   (1031 bytes). **There is no report `0x08`.**
 - Read path verified: report `0x05` returns `05 01 02 00 00 00`.
-- Report `0x06` `GetFeature` stalls (`EPIPE`); the official read handshake
-  (`05 83 c6 00 00 00` → report 6) is captured but not sent by this tool.
-- Captured lighting frame: report `0x06`, header `06 09 cc 00 40 00 00 00`,
-  then 126-byte R, G, B planes at offsets 8, 134, 260.
-- The official app follows the colour frame with `09 d0` (latch) and `03 c6`
-  (config). This tool currently sends **only** the colour frame.
-- Main 87 keys: LED slots `0–101`, taken from the official `Cfg.ini`.
-- Extra G/MR/media keys: slots `102–125`, to be discovered by calibration.
-- Safety: only declared reports are touched; no firmware/bootloader commands.
+- Config read: `05 83 c6 00 00 00` → report 6 → 262 bytes; the 136-byte
+  writable block is at offset `0x08`.
+- Palette read: `05 88 c8 00 00 00` → report 6 → 1032 bytes; the 441-byte
+  palette is at offset `0x08`.
+- Config write: report `0x06`, header `06 03 c6 00 40`, then 136 config bytes.
+- Palette write: report `0x06`, header `06 08 c8 00 40`, then 441 palette bytes.
+- Per-key write: report `0x06`, header `06 09 cc 00 40`, 1024 payload bytes.
+- 20 effects + Self-define + OFF; brightness `0–9`; speed `1–4`; random or
+  one of seven palette colours per effect.
+- Safety: only declared reports and captured K622 frames; no firmware,
+  bootloader, macro or keymap writes. Every config/palette write backs up
+  first.
 
 ## Commands
 
@@ -47,18 +56,87 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 ./bin/k622rgb info            # descriptor + declared report table
 ./bin/k622rgb check           # discovery, permissions, descriptor hash
 ./bin/k622rgb dump --report 5 --out /tmp/k622/rep5.bin
-./bin/k622rgb dump --report 6 --out /tmp/k622/rep6.bin   # currently EPIPE
+./bin/k622rgb config show     # current mode, parameters and palette
+./bin/k622rgb config dump     # full lighting backup (config, palette, frames)
+./bin/k622rgb config restore ./backup
+./bin/k622rgb mode list       # all 20 effects + Self-define + OFF
+./bin/k622rgb mode set static --color ff0000 --brightness 9
+./bin/k622rgb mode set breathing --color 0000ff --brightness 7 --speed 1
+./bin/k622rgb mode set rainbow --speed 3 --brightness 9
+./bin/k622rgb mode set neon-stream --random
+./bin/k622rgb color set ripples-shining 2 00ffff
+./bin/k622rgb mode set ripples-shining --color-index 2
+./bin/k622rgb mode set per-key
 ./bin/k622rgb set --dry-run --no-state Esc=red           # print exact frame
-./bin/k622rgb set Esc=red                                 # write (hash checked)
+./bin/k622rgb set --from-device 1=green                  # additive from device
+./bin/k622rgb set --activate Esc=red                     # switch to Self-define
+./bin/k622rgb set Esc=red                                # write (hash checked)
 ./bin/k622rgb set 1=green                                 # additive with saved frame
 ./bin/k622rgb set --off                                   # all LEDs off
+./bin/k622rgb off                                         # built-in OFF mode
+./bin/k622rgb profile save gaming                         # local lighting profile
+./bin/k622rgb profile load gaming
+./bin/k622rgb profile list
+./bin/k622rgb list                                        # calibration status
+./bin/k622rgb calibrate                                   # map slots 102-125
+./bin/k622rgb calibrate --verify                          # re-light mapped slots
 ```
 
-`info`, `dump`, and `check` are read-only. `set` is the only write command and
-only sends the captured `09 cc` report-6 frame. `dump --report 6` still fails
-with `EPIPE`; the official read handshake is captured but not sent by the tool.
-`set` saves the frame it last wrote under the XDG state directory so successive
-calls are additive; this is a local record, not a device read-back.
+## Calibration
+
+The official software only maps the 87 main keys. The G/MR/media keys live in
+slots `102–125`, mixed with slots that have no LED. Run:
+
+```bash
+./bin/k622rgb calibrate
+```
+
+Each slot is lit white in turn. Answer with a key name (`G1`–`G5`, `MR`, `RGB`,
+`Prev`, `Play`, `Next`, `Mute`, `Volume`), a comma-separated list if several
+keys light, `none` for a dead slot, `skip`, `undo`, or `quit`. Any other text is
+accepted and stored as-is, so a slot that lights the wrong key can be noted;
+`list` flags main-key names and unexpected labels. Answers are saved after
+every slot to `~/.config/k622rgb/layout.json` (respecting `XDG_CONFIG_HOME`;
+override with `--layout FILE` or `K622RGB_LAYOUT_FILE`, also accepted by `list`
+and `set`). When calibration ends, the last frame saved by `set` is restored,
+or the board is left off.
+
+Afterwards the extra keys work like any other key:
+
+```bash
+./bin/k622rgb set G1=red MR=blue
+./bin/k622rgb list
+```
+
+## Profiles
+
+`profile save NAME` captures the exact config block, effect palette and the
+custom per-key frame as JSON under `~/.config/k622rgb/profiles` (respecting
+`XDG_CONFIG_HOME`; override with `--dir` or `K622RGB_PROFILE_DIR`).
+`profile load NAME` backs up the current lighting, then restores the palette,
+the optional per-key frame and the config. These are local **lighting**
+profiles; the keyboard's keymap/macro table is never written.
+
+```bash
+./bin/k622rgb profile save gaming
+./bin/k622rgb profile load gaming
+./bin/k622rgb profile show gaming
+./bin/k622rgb profile list
+./bin/k622rgb profile delete gaming
+```
+
+`info`, `dump`, `check`, and `list` are read-only. `set` and `calibrate` send
+only the captured `09 cc` report-6 frame; `calibrate` also restores the last
+saved frame when it finishes. `mode`, `color`, `config` and `off` use the
+verified configuration mailbox (`05 83 c6` / `05 88 c8`) and the captured
+`03 c6` / `08 c8` write shapes. Every config/palette write saves a full backup
+first. `set` saves the frame it last wrote under the XDG state directory so
+successive calls are additive; `set --from-device` instead reads the custom
+frame back from the keyboard.
+
+`dump --report 6` still fails with `EPIPE` when sent without the vendor
+handshake. The mailbox commands above are the supported read path; the tool
+never sends an arbitrary report-5 command.
 
 ## Quick facts
 
@@ -70,8 +148,15 @@ calls are additive; this is a local record, not a device read-back.
 | Vendor control interface | IF1, usage page `0xFF00` |
 | Vendor reports | feature `0x05` (5 B), feature `0x06` (1031 B) |
 | Report `0x08` | does not exist |
+| Config read | `05 83 c6 00 00 00` → report 6, 262 B (config at `0x08`) |
+| Palette read | `05 88 c8 00 00 00` → report 6, 1032 B (palette at `0x08`) |
+| Config write | report `0x06`, `03 c6 00 40`, 136 config bytes |
+| Palette write | report `0x06`, `08 c8 00 40`, 441 palette bytes |
 | Lighting write frame | report `0x06`, `09 cc 00 40`, 1032 B incl. report ID |
 | Colour planes | R `8..133`, G `134..259`, B `260..385` |
+| Modes | 20 effects + Self-define (21) + OFF (0) |
+| Brightness / speed | `0–9` / `1–4`, per mode |
+| Effect palette | 21 blocks × 7 RGB triples (blocks 1–20 used) |
 | Template sha256 | `5d922916bdeadf7bfc3676a00855b8c0b9e05562e083d344d67dd58c73e4626a` |
 | Main key LED slots | `0–101` (87 keys, 15 dead slots) |
 | Extra LED slots | `102–125` (unknown, calibration required) |

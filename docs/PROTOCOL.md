@@ -4,8 +4,9 @@
 - **USB ID:** `258a:0049`
 - **Control interface:** IF1, usage page `0xFF00`, usage `0x01`
 - **Declared vendor reports:** feature `0x05` (5 bytes), feature `0x06` (1031 bytes)
-- **Status:** read and write paths **verified on hardware**. The captured
-  `09 cc` colour frame is sufficient; `09 d0`/`03 c6` are not needed.
+- **Status:** per-key, effect/config and palette read/write paths **verified on
+  hardware**. `09 cc` handles per-key colours; `03 c6` handles modes,
+  brightness/speed and the per-key flag; `08 c8` handles the effect palette.
 
 ## 1. Summary
 
@@ -149,12 +150,19 @@ in byte 0 followed by the payload.
 | `0x05` | `0xC0064807` | 6 B | OK: `05 01 02 00 00 00` |
 | `0x06` | `0xC4084807` | 1032 B | **`EPIPE`** — the device stalls this GET |
 
-Report `0x06` is therefore **not readable in isolation**. The binary usbmon
-capture confirms the official read handshake: the app writes report 5
-`05 83 c6 00 00 00`, waits 20 ms, then reads report 6 and receives a 262-byte
-response starting `06 83 c6 ...`. A profile read uses `05 84 d8 00 00 00` and
-returns 1032 bytes starting `06 84 d8 ...`. The tool does **not** send either
-report-5 command yet.
+Report `0x06` is therefore **not readable in isolation**. The official read
+handshake (and this tool's mailbox reads) first sends report 5, waits, then
+reads report 6:
+
+| Command | Response | Use |
+|---|---|---|
+| `05 83 c6 00 00 00` | 262 B, `06 83 c6 …` | lighting config (136 B at offset 8) |
+| `05 88 c8 00 00 00` | 1032 B, `06 88 …` | effect palette (441 B at offset 8) |
+| `05 89 cc 00 00 00` | 1032 B, `06 89 …` | custom per-key frame 1 |
+| `05 89 d0 00 00 00` | 1032 B, `06 89 …` | custom per-key frame 2 |
+| `05 84 d8 00 00 00` | 1032 B, `06 84 d8 …` | profile/keymap table (read-only) |
+
+`controller.send_mailbox()` refuses every command outside this allowlist.
 
 ## 6. Lighting write — captured from the official software
 
@@ -181,10 +189,11 @@ sha256 `5d922916bdeadf7bfc3676a00855b8c0b9e05562e083d344d67dd58c73e4626a`).
 The tool copies it, writes only the three planes, and verifies that the header
 and the tail still match before `HIDIOCSFEATURE(1032)`.
 
-Current implementation: **only the `09 cc` frame is sent**, and the hardware
-test below shows that this is sufficient. It is the only packet that can be
-built from user colours, and it is the only packet the write allowlist accepts.
-`09 d0` and `03 c6` are captured and understood, but they are not sent.
+Implementation: `set` sends the `09 cc` frame (the per-key colours).
+`mode`/`off` send `03 c6` config blocks; `color` sends `08 c8` palettes.
+`config restore --custom` can send `09 cc`/`09 d0` custom frames. The
+`09 d0` companion is not needed for per-key colours, and the `04 d8`
+profile/keymap table is never written.
 
 ### 6.1 Capture sequence
 
@@ -204,13 +213,20 @@ Both are byte-for-byte constant in the capture.
 
 ### 6.2 Read-back
 
-The colour buffer cannot be read back. A standalone `GetFeature(0x06)` stalls
-with `EPIPE`, and the captured read handshake returns the 262-byte config, not
-the colour frame. The CLI therefore keeps a local **write-ahead record** of the
-last frame it sent (`$XDG_STATE_HOME/k622rgb/last-frame.bin`, or
-`~/.local/state/k622rgb/last-frame.bin`). This is not a device read-back; it
-only makes successive `set` calls additive. Use `--reset` to ignore it and
-start from the captured all-off frame.
+A standalone `GetFeature(0x06)` stalls with `EPIPE`, but the vendor mailbox
+reads the custom frame back:
+
+```text
+SET5  05 89 cc 00 00 00
+GET6  06 89 00 ...              (1032-byte response)
+```
+
+The 1024-byte payload is identical to the `09 cc` write payload. `set
+--from-device` uses it as the additive base. By default `set` still keeps a
+local **write-ahead record** of the last frame it sent
+(`$XDG_STATE_HOME/k622rgb/last-frame.bin`, or
+`~/.local/state/k622rgb/last-frame.bin`). Use `--reset` to ignore it and start
+from the captured all-off frame.
 
 ### 6.3 Hardware verification (2026-11-01)
 
@@ -339,23 +355,26 @@ bytes, with slot 0 first in each plane.
 ## 11. Safety rules
 
 1. **Only declared feature reports `0x05` and `0x06` may be used.** Report
-   `0x08` does not exist; never send it.
-2. **`info`, `dump`, and `check` are read-only.** `dump --report 6` still stalls
-   with `EPIPE`; these commands never write.
-3. **`set` writes exactly one captured frame shape:** report `0x06`, header
-   `06 09 cc 00 40 00 00 00`, three 126-byte colour planes, and the captured
-   tail. `controller.write_feature()` refuses every other header or tail, and
-   there is no generic feature-write API.
+   `0x08` does not exist; never send it. Report `0x05` is limited to the
+   captured read commands in `ALLOWED_MAILBOX_COMMANDS`.
+2. **`info`, `dump`, `check`, `list` and the read subcommands never write
+   lighting data.** `dump --report 6` still stalls with `EPIPE`; use the
+   mailbox reads (`config show`, `config dump`, `mode show`, `color show`).
+3. **Writes use only validated report-0x06 shapes:** `09 cc` per-key frames,
+   `03 c6` config blocks, `08 c8` effect palettes, and the `09 d0`/`09 cc`
+   custom frames during an explicit restore. Builders reject wrong lengths,
+   headers and config markers; there is no generic feature-write API.
 4. **Writes require the captured descriptor hash.** A different descriptor is
    reported as `UNKNOWN` and refused before the device is opened.
-5. **`--dry-run` prints the complete 1032-byte frame and opens no device.**
-   Nothing is written and the local last-frame record is not changed.
-6. **Never send profile-save, firmware, bootloader, flash, macro, or keymap
-   opcodes.** The captured `04 d8` profile-write packet and the `09 d0`/`03 c6`
-   companion packets are deliberately not sent; hardware verification showed
-   they are not needed for per-key colours.
-7. **No driver detach.** hidraw coexists with `usbhid`; typing is unaffected.
-8. **Stop on unexpected errors.** `EPIPE`/`EINVAL` are findings, not invitations
+5. **Every config/palette write backs up first.** The tool reads the current
+   config and palette into a timestamped backup directory before writing;
+   `config restore` is the recovery path. `--no-backup` is opt-in.
+6. **`--dry-run` opens no device.** It prints the intended mode/parameter or
+   per-key frame; nothing is written and no backup is created.
+7. **Never send firmware, bootloader, flash, macro, or keymap opcodes.** The
+   `04 d8` profile/keymap table is read-only in this tool and is never written.
+8. **No driver detach.** hidraw coexists with `usbhid`; typing is unaffected.
+9. **Stop on unexpected errors.** `EPIPE`/`EINVAL` are findings, not invitations
    to try other report IDs.
 
 ## 12. Verification status
@@ -366,7 +385,7 @@ bytes, with slot 0 first in each plane.
 | IF1 descriptor parse (7 reports, no `0x08`) | Confirmed |
 | Descriptor hash fixture | Confirmed (`32771137…`) |
 | Report `0x05` `GetFeature` | Confirmed: `05 01 02 00 00 00` |
-| Report `0x06` `GetFeature` | Confirmed **stalled** (`EPIPE`) |
+| Report `0x06` `GetFeature` without a mailbox command | Stalls (`EPIPE`) |
 | Official app read handshake (`83 C6` → report 6) | **Captured** (`06 83 c6 …`, 262 B) |
 | Main key slots `0–101` | Confirmed from `Cfg.ini` |
 | 126-slot / 126-byte planes | **Confirmed on hardware** (R `8`, G `134`, B `260`) |
@@ -375,10 +394,15 @@ bytes, with slot 0 first in each plane.
 | Write implementation (`set`, allowlist, state) | **Implemented; unit-tested** |
 | Hardware write test (`set Esc=red`) | **Confirmed:** Esc red, `1` green, `--off` clears |
 | Additive saved-frame behaviour | **Confirmed on hardware** |
-| `09 d0` / `03 c6` companions | Not required for per-key colours; still not sent |
-| Read-back backup for report 6 | **Blocked by the stalled GET**; local write-ahead record only |
+| `09 d0` companion | Not required for per-key colours; read-only except explicit restore |
+| Read-back backup for report 6 | **Confirmed via mailbox** (`89 cc`); `set --from-device` uses it |
+| Config read/write (`83 c6` / `03 c6`) | **Confirmed:** 136-byte no-op round trip |
+| Effect palette (`88 c8` / `08 c8`) | **Confirmed:** 441-byte round trip |
+| 20 effects + Self-define + OFF | **Confirmed on hardware** |
+| Brightness 0–9 / speed 1–4 | **Confirmed on hardware** |
+| Official UI option set | **Confirmed under Wine 11** |
 | Extra slots `102–125` | **Pending calibration** |
-| Persistence / built-in effect override | Unknown |
+| Persistence of config/palette | **Confirmed across reads/writes** (power-cycle test still pending) |
 
 ## 13. Next steps
 
@@ -386,14 +410,79 @@ The capture and hardware-write gates are closed. Remaining work:
 
 1. Calibrate slots `102–125` (G/MR/media keys) by writing `slot:N=ffffff` and
    recording which physical key lights.
-2. Decide whether to expose effects/profiles; the current CLI only sets static
-   per-key colours plus `--off`.
-3. Optionally investigate the read handshake for profile/config read-back; the
-   colour buffer itself still cannot be read.
+2. Optionally test persistence across a full power cycle (replug is already
+   handled; the writing path is the same one the official app uses).
+3. Investigate whether the key-group (`GaoshouKey*`) game-mode highlighting is
+   an RGB feature on this model; it is not exposed by the lighting tab.
+4. Optional: daemon/IPC or reactive key effects (out of the current scope).
 
 Do not send `09 d0`, `03 c6`, or `04 d8` unless a new, captured need appears.
 
-## 14. References
+## 14. Lighting configuration and effects
+
+This section was verified on the physical K622 after the initial per-key work
+and is implemented by `k622rgb mode`, `color`, `config` and `off`.
+
+### 14.1 Config mailbox
+
+```text
+SET5  05 83 c6 00 00 00
+GET6  06 83 c6 ...              # 262-byte response
+```
+
+The 136-byte writable config block is response bytes `0x08..0x8F`. Writing it
+uses report `0x06`:
+
+```text
+06 03 c6 00 40 00 00 00 <136 bytes> <zeros to 1032>
+```
+
+A no-op round trip was verified: read, write unchanged, read again returns the
+same 262 bytes. The current mode is byte `0x0D`; the per-key flag is byte
+`0x0C`; the 20 effect parameter pairs start at `0x1E`. Each pair is
+`[colour, (speed << 4) | brightness]`; colour `0..6` selects a palette entry
+and `7` means random. The `5a a5` marker sits at `0x46`.
+
+### 14.2 Effect palette
+
+```text
+SET5  05 88 c8 00 00 00
+GET6  06 88 00 ...              # 1032-byte response
+```
+
+The 441-byte palette starts at response offset `0x08`: 21 blocks of 21 bytes.
+Block 0 is OFF; blocks 1..20 are the effects. Each block is seven RGB triples.
+The write shape is:
+
+```text
+06 08 c8 00 40 00 00 00 <441 bytes> <zeros to 1032>
+```
+
+A write/read round trip returns the exact bytes. The official app's **RGB**
+checkbox maps to colour byte `7`; a custom colour is written to entry 0 and
+selected with colour byte `0`.
+
+### 14.3 Per-key read-back
+
+```text
+SET5  05 89 cc 00 00 00
+GET6  06 89 00 ...              # 1032-byte response
+```
+
+The 1024-byte payload at response offset `0x08` matches the `09 cc` write
+payload byte-for-byte. `k622rgb set --from-device` uses it as the additive
+base. `89 d0` reads the second custom table; `84 d8` reads the profile/keymap
+table.
+
+### 14.4 Official UI verification
+
+`KeyboardDrv.exe` V1.6.6 was run under Wine 11 (Flatpak) with the physical
+keyboard. The UI showed exactly the expected option set: 20 named effects,
+Self-define, OFF; brightness slider `0–9`; speed slider `1–4`; an RGB
+(random) checkbox; and a custom colour picker. No direction control was
+present, matching `LedOptN`'s `direct=0` column in `Cfg.ini`.
+
+## 15. References
 
 - Reference implementation:
   <https://github.com/kn4oqw-clint/redragon-ks82b-rgb>

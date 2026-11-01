@@ -1,12 +1,13 @@
 import contextlib
 import io
+import json
 import os
 import shutil
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from k622rgb import cli, controller
+from k622rgb import cli, controller, layout
 
 FIXTURE = Path(__file__).parent / "data" / "k622-if1-descriptor.bin"
 
@@ -46,6 +47,9 @@ class CliTests(unittest.TestCase):
             interface="01",
             hid_id="0003:0000258A:00000049",
         )
+        self.layout_path = self.root / "layout.json"
+        layout.clear_calibration_cache()
+        self.addCleanup(layout.clear_calibration_cache)
 
     def run_cli(
         self,
@@ -84,7 +88,11 @@ class CliTests(unittest.TestCase):
             )
             stack.enter_context(
                 mock.patch.dict(
-                    os.environ, {"XDG_STATE_HOME": str(self.root / "state")}
+                    os.environ,
+                    {
+                        "XDG_STATE_HOME": str(self.root / "state"),
+                        layout.LAYOUT_FILE_ENV: str(self.layout_path),
+                    },
                 )
             )
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
@@ -464,6 +472,143 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertFalse(Path(state_path).exists())
+
+    # -- list ------------------------------------------------------------
+
+    def write_layout(self, slots):
+        self.layout_path.write_text(
+            json.dumps({"version": 1, "slots": slots}), encoding="utf-8"
+        )
+        layout.clear_calibration_cache()
+
+    def test_list_shows_uncalibrated_extras(self):
+        code, out, err, opener, reader, writer = self.run_cli(["list"])
+        self.assertEqual(code, 0)
+        self.assertIn("extra slots (102-125)", out)
+        self.assertIn("102  uncalibrated", out)
+        self.assertIn("calibrated: 0 of 24", out)
+        opener.assert_not_called()
+        reader.assert_not_called()
+        writer.assert_not_called()
+        self.assertEqual(err, "")
+
+    def test_list_reads_the_calibration_file(self):
+        self.write_layout({"102": "G1", "103": ""})
+        code, out, _err, _opener, _reader, _writer = self.run_cli(["list"])
+        self.assertEqual(code, 0)
+        self.assertIn("102  G1", out)
+        self.assertIn("103  dead", out)
+        self.assertIn("calibrated: 2 of 24", out)
+
+    def test_list_reads_an_explicit_layout_file(self):
+        other = self.root / "other-layout.json"
+        other.write_text(
+            json.dumps({"version": 1, "slots": {"110": "Mute"}}),
+            encoding="utf-8",
+        )
+        code, out, _err, _opener, _reader, _writer = self.run_cli(
+            ["list", "--layout", str(other)]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("110  Mute", out)
+        self.assertIn("calibrated: 1 of 24", out)
+
+    def test_list_flags_main_key_and_unexpected_labels(self):
+        self.write_layout({"102": "Esc", "103": "Bogus"})
+        code, out, _err, _opener, _reader, _writer = self.run_cli(["list"])
+        self.assertEqual(code, 0)
+        self.assertIn("102  Esc (main key!)", out)
+        self.assertIn("103  Bogus (unexpected)", out)
+        self.assertIn("calibrated: 2 of 24", out)
+
+    def test_list_all_prints_the_main_block(self):
+        code, out, _err, _opener, _reader, _writer = self.run_cli(
+            ["list", "--all"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("all slots:", out)
+        self.assertIn("Esc", out)
+        self.assertIn("main", out)
+        self.assertIn("uncalibrated", out)
+
+    # -- calibrate -------------------------------------------------------
+
+    def test_calibrate_dry_run_touches_nothing(self):
+        code, out, _err, opener, _reader, writer = self.run_cli(
+            ["calibrate", "--dry-run"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("dry run", out)
+        self.assertIn("slot 102: uncalibrated", out)
+        self.assertIn("would light each slot white", out)
+        opener.assert_not_called()
+        writer.assert_not_called()
+        self.assertFalse(self.layout_path.exists())
+
+    def test_calibrate_passes_its_options(self):
+        with mock.patch(
+            "k622rgb.cli.calibrate.run", return_value=0
+        ) as run:
+            code, _out, _err, _opener, _reader, _writer = self.run_cli(
+                [
+                    "calibrate",
+                    "--verify",
+                    "--start",
+                    "110",
+                    "--end",
+                    "120",
+                    "--layout",
+                    str(self.layout_path),
+                ]
+            )
+        self.assertEqual(code, 0)
+        run.assert_called_once_with(
+            start=110,
+            end=120,
+            verify=True,
+            dry_run=False,
+            node=None,
+            layout_path=str(self.layout_path),
+            verbose=False,
+        )
+
+    def test_calibrate_rejects_an_invalid_range(self):
+        code, _out, err, opener, _reader, writer = self.run_cli(
+            ["calibrate", "--dry-run", "--start", "130", "--end", "140"]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("invalid slot range", err)
+        opener.assert_not_called()
+        writer.assert_not_called()
+
+    def test_set_requires_calibration_for_extra_keys(self):
+        code, _out, err, opener, _reader, writer = self.run_cli(
+            ["set", "--dry-run", "--no-state", "G1=red"]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("calibrate", err)
+        opener.assert_not_called()
+        writer.assert_not_called()
+
+    def test_set_accepts_an_explicit_layout_file(self):
+        other = self.root / "other-layout.json"
+        other.write_text(
+            json.dumps({"version": 1, "slots": {"102": "G1"}}),
+            encoding="utf-8",
+        )
+        code, out, _err, _opener, _reader, _writer = self.run_cli(
+            ["set", "--dry-run", "--no-state", "--layout", str(other), "G1=red"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("set: G1 (slot 102) = #ff0000", out)
+
+    def test_calibrated_extra_key_works_in_set(self):
+        self.write_layout({"102": "G1"})
+        code, out, _err, _opener, _reader, _writer = self.run_cli(
+            ["set", "--dry-run", "--no-state", "G1=red"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("set: G1 (slot 102) = #ff0000", out)
 
     # -- argparse --------------------------------------------------------
 

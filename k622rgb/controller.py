@@ -15,12 +15,13 @@ There is **no** feature report 0x08 on this board. Earlier revisions of this
 project sent one; that request timed out because the kernel/device do not know
 it.
 
-The read path uses ``HIDIOCGFEATURE``. The only write this module can perform
-is the lighting frame captured byte-for-byte from the official K622 software:
-report ``0x06`` with the ``09 cc 00 40`` header and three 126-byte colour
-planes. Every write is validated against the captured all-off template before
-it reaches the kernel; there is no generic "send arbitrary feature report"
-entry point.
+Reads use ``HIDIOCGFEATURE``. The vendor configuration is read through
+report ``0x05`` mailbox commands (the same handshake used by the official
+software). Writes are limited to the exact report-0x06 shapes captured from
+the official K622 software: ``09 cc`` per-key frames, ``03 c6`` config
+blocks, ``08 c8`` effect palettes, and the two custom frames. Every write is
+validated before it reaches the kernel; there is no generic "send arbitrary
+feature report" entry point.
 """
 
 import errno
@@ -28,6 +29,7 @@ import fcntl
 import glob
 import hashlib
 import os
+import time
 from collections import namedtuple
 from functools import lru_cache
 from typing import Dict, List, Mapping, Optional, Tuple
@@ -642,3 +644,570 @@ def write_feature(fd: int, packet) -> int:
         return fcntl.ioctl(fd, hidiocsfeature(len(buffer)), buffer)
     except OSError as exc:
         raise _map_write_error(exc) from exc
+
+
+# --------------------------------------------------------------------------
+# Vendor configuration mailbox (verified on the K622)
+# --------------------------------------------------------------------------
+#
+# The official K622 app reads the lighting configuration through report 0x05:
+#
+#     SET5  05 83 c6 00 00 00
+#     GET6  06 83 c6 ...              (262 bytes)
+#
+# The returned buffer contains the 136-byte configuration block at offset
+# 0x08.  Writing it back uses report 0x06 with header ``06 03 c6 00 40`` and
+# the 136 bytes at payload offset 8.  A no-op round trip was verified on the
+# physical keyboard: config -> maybe modified -> config returns the same bytes.
+#
+# The effect palette uses:
+#
+#     SET5  05 88 c8 00 00 00
+#     GET6  06 88 00 ...              (1032 bytes)
+#
+# and writes with header ``06 08 c8 00 40`` plus 441 bytes.  The table is 21
+# blocks of 21 bytes; block 0 is OFF, blocks 1..20 are the 20 effects, and each
+# block holds seven RGB triples (colour index 0..6).
+
+MAILBOX_REPORT_ID = 0x05
+CONFIG_REPORT_ID = 0x06
+
+CONFIG_READ_COMMAND = bytes.fromhex("05 83 c6 00 00 00")
+COLOR_READ_COMMAND = bytes.fromhex("05 88 c8 00 00 00")
+CUSTOM1_READ_COMMAND = bytes.fromhex("05 89 cc 00 00 00")
+CUSTOM2_READ_COMMAND = bytes.fromhex("05 89 d0 00 00 00")
+PROFILE_READ_COMMAND = bytes.fromhex("05 84 d8 00 00 00")
+
+ALLOWED_MAILBOX_COMMANDS = {
+    CONFIG_READ_COMMAND: "config",
+    COLOR_READ_COMMAND: "effect palette",
+    CUSTOM1_READ_COMMAND: "custom frame 1",
+    CUSTOM2_READ_COMMAND: "custom frame 2",
+    PROFILE_READ_COMMAND: "profile table",
+}
+
+CONFIG_RESPONSE_OFFSET = 0x08
+CONFIG_SIZE = 136
+CONFIG_WRITE_HEADER = bytes.fromhex("06 03 c6 00 40 00 00 00")
+CONFIG_MODE_INDEX = 0x0D
+CONFIG_PER_KEY_INDEX = 0x0C
+CONFIG_PAIR_BASE = 0x1E
+CONFIG_PAIR_COUNT = 20
+CONFIG_TRAILER = bytes.fromhex("5a a5")
+CONFIG_TRAILER_INDEX = 0x46
+CONFIG_READ_RESPONSE_SIZE = 262
+
+COLOR_WRITE_HEADER = bytes.fromhex("06 08 c8 00 40 00 00 00")
+COLOR_TABLE_SIZE = 441
+COLOR_BLOCK_SIZE = 21
+COLOR_BLOCKS = 21
+COLOR_INDEX_MAX = 6
+COLOR_RANDOM = 7
+
+PER_KEY_MODE = 21
+OFF_MODE = 0
+MAX_MODE = PER_KEY_MODE
+
+#: Optional parameters exposed by the official K622 UI.  Taken from the
+#: ``LedOpt1`` ... ``LedOpt20`` rows in the official ``Cfg.ini``:
+#:   LedOptN = hw, effect, speed, light, direct, random, color
+#: ``speed``/``light`` mean the UI offers those sliders; ``random``/``color``
+#: mean the effect can use a random palette or one of the seven colours.
+ModeInfo = namedtuple(
+    "ModeInfo", "value key name aliases speed brightness random color"
+)
+
+
+def _mode(value, key, name, aliases, speed, brightness, random, color):
+    return ModeInfo(value, key, name, aliases, speed, brightness, random, color)
+
+
+MODES = (
+    _mode(0, "off", "OFF", ("none", "dark"), False, False, False, False),
+    _mode(1, "static", "Fixed_on", ("fixed_on", "fixed", "solid", "static"), False, True, True, True),
+    _mode(2, "respire", "Respire", ("breathing", "breathe"), True, True, True, True),
+    _mode(3, "rainbow", "Rainbow", (), True, True, False, False),
+    _mode(4, "flash_away", "Flash_away", ("flash", "flashaway"), True, True, True, True),
+    _mode(5, "raindrops", "Raindrops", ("rain",), True, True, True, True),
+    _mode(6, "rainbow_wheel", "Rainbow_wheel", ("wheel",), True, True, False, False),
+    _mode(7, "ripples_shining", "Ripples_shining", ("ripples", "ripple"), True, True, True, True),
+    _mode(8, "stars_twinkle", "Stars_twinkle", ("stars", "twinkle"), True, True, True, True),
+    _mode(9, "shadow_disappear", "Shadow_disappear", ("shadow",), True, True, True, True),
+    _mode(10, "retro_snake", "Retro_snake", ("snake", "retro"), True, True, True, True),
+    _mode(11, "neon_stream", "Neon_stream", ("neon", "stream"), True, True, True, True),
+    _mode(12, "reaction", "Reaction", ("reactive",), True, True, True, True),
+    _mode(13, "sine_wave", "Sine_wave", ("sine", "wave"), True, True, True, True),
+    _mode(14, "retinue_scanning", "Retinue scanning", ("retinue", "scanning"), True, True, True, True),
+    _mode(15, "rotating_windmill", "Rotating windmill", ("windmill",), True, True, True, True),
+    _mode(16, "colorful_waterfall", "Colorful waterfall", ("waterfall",), True, True, False, False),
+    _mode(17, "blossoming", "Blossoming", ("blossom",), True, True, False, False),
+    _mode(18, "rotating_storm", "Rotating storm", ("storm",), True, True, True, True),
+    _mode(19, "collision", "Collision", ("collide",), True, True, True, True),
+    _mode(20, "perfect", "Perfect", (), True, True, True, True),
+    _mode(21, "per_key", "Self-define", ("per-key", "self_define", "selfdefine", "custom"), False, False, False, True),
+)
+
+MODE_BY_VALUE = {mode.value: mode for mode in MODES}
+MODE_BY_KEY = {}
+for _info in MODES:
+    MODE_BY_KEY[_info.key] = _info
+    for _alias in _info.aliases:
+        MODE_BY_KEY[_alias] = _info
+del _info, _alias
+
+
+def lookup_mode(name) -> ModeInfo:
+    """Resolve a mode name, alias or number to a :class:`ModeInfo`."""
+    if isinstance(name, bool):
+        raise ValueError("mode must be a name or an integer")
+    if isinstance(name, int):
+        try:
+            return MODE_BY_VALUE[name]
+        except KeyError:
+            raise ValueError("unknown mode %r (valid: 0..21)" % (name,)) from None
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("mode must be a non-empty name")
+    stripped = name.strip()
+    if stripped.isdigit():
+        return lookup_mode(int(stripped, 10))
+    key = stripped.lower().replace("-", "_").replace(" ", "_")
+    try:
+        return MODE_BY_KEY[key]
+    except KeyError:
+        raise ValueError(
+            "unknown mode %r; use `k622rgb mode list`" % (name,)
+        ) from None
+
+
+#: Per-mode speed and brightness ranges shown by the official UI.
+SPEED_MIN, SPEED_MAX = 1, 4
+BRIGHTNESS_MIN, BRIGHTNESS_MAX = 0, 9
+
+
+def _map_command_error(exc: OSError) -> DeviceError:
+    if exc.errno in (errno.EACCES, errno.EPERM):
+        return PermissionDenied(
+            "Permission denied while sending a vendor mailbox command: %s"
+            % (exc.strerror or exc)
+        )
+    if exc.errno in (errno.EPIPE, errno.ESHUTDOWN, errno.ECONNRESET):
+        return ProtocolError(
+            "The keyboard stalled the mailbox command (%s). Replug it and retry."
+            % errno.errorcode.get(exc.errno, exc.errno)
+        )
+    if exc.errno == errno.ETIMEDOUT:
+        return ProtocolError("Timed out sending a vendor mailbox command.")
+    if exc.errno in (errno.ENODEV, errno.ENXIO, errno.ENOENT):
+        return DeviceError("Device disconnected while sending a mailbox command.")
+    if exc.errno == errno.EINVAL:
+        return ProtocolError("The device rejected the mailbox command (EINVAL).")
+    return ProtocolError("Failed to send a mailbox command: %s" % (exc,))
+
+
+def send_mailbox(fd: int, command) -> int:
+    """Send one allow-listed 6-byte report-0x05 vendor command.
+
+    Only the read commands captured from the official K622 app (and verified
+    on hardware) are accepted.  This function is the only report-0x05 write
+    path, and it cannot send arbitrary bytes.
+    """
+    command = bytes(command)
+    if command not in ALLOWED_MAILBOX_COMMANDS:
+        raise ProtocolError(
+            "refusing unknown report 0x05 command %s; only captured read "
+            "commands are allowed" % command.hex(" ")
+        )
+    buffer = bytearray(command)
+    try:
+        return fcntl.ioctl(fd, hidiocsfeature(len(buffer)), buffer)
+    except OSError as exc:
+        raise _map_command_error(exc) from exc
+
+
+def read_feature_partial(fd: int, report_id: int, max_size: int) -> bytes:
+    """Read a feature report whose device response may be shorter than declared.
+
+    The K622 answers ``HIDIOCGFEATURE(1032)`` with a 262-byte configuration
+    response.  ``read_feature`` deliberately insists on the declared size, so
+    mailbox reads use this function instead.
+    """
+    if not 1 <= max_size <= 0x3FFF:
+        raise ValueError("invalid feature read size: %r" % (max_size,))
+    buffer = bytearray(max_size)
+    buffer[0] = report_id
+    try:
+        copied = fcntl.ioctl(fd, hidiocgfeature(max_size), buffer)
+    except OSError as exc:
+        raise _map_read_error(report_id, exc) from exc
+    if copied <= 0:
+        raise ProtocolError(
+            "GetFeature returned no data for report 0x%02X." % report_id
+        )
+    return bytes(buffer[: min(copied, max_size)])
+
+
+def mailbox_read(fd: int, command, expected: int = CONFIG_READ_RESPONSE_SIZE,
+                 delay: float = 0.05) -> bytes:
+    """Send an allow-listed read command, wait, then read report 0x06."""
+    send_mailbox(fd, command)
+    if delay:
+        time.sleep(delay)
+    return read_feature_partial(fd, CONFIG_REPORT_ID, 1032)
+
+
+def read_config_response(fd: int) -> bytes:
+    """Return the 262-byte report-0x06 response for the lighting config."""
+    response = mailbox_read(fd, CONFIG_READ_COMMAND)
+    if len(response) < CONFIG_RESPONSE_OFFSET + CONFIG_SIZE:
+        raise ProtocolError(
+            "the config response is only %d bytes; expected at least %d"
+            % (len(response), CONFIG_RESPONSE_OFFSET + CONFIG_SIZE)
+        )
+    return response
+
+
+def config_from_response(response) -> bytes:
+    """Extract the 136-byte writable config block from a read response."""
+    response = bytes(response)
+    end = CONFIG_RESPONSE_OFFSET + CONFIG_SIZE
+    if len(response) < end:
+        raise ProtocolError(
+            "config response is %d bytes; need at least %d" % (len(response), end)
+        )
+    return response[CONFIG_RESPONSE_OFFSET:end]
+
+
+def read_config(fd: int) -> bytes:
+    """Read and return the 136-byte lighting configuration block."""
+    return config_from_response(read_config_response(fd))
+
+
+def read_effect_palette(fd: int) -> bytes:
+    """Read and return the 441-byte effect-colour table."""
+    response = mailbox_read(fd, COLOR_READ_COMMAND)
+    end = CONFIG_RESPONSE_OFFSET + COLOR_TABLE_SIZE
+    if len(response) < end:
+        raise ProtocolError(
+            "the effect-colour response is only %d bytes; expected at least %d"
+            % (len(response), end)
+        )
+    return response[CONFIG_RESPONSE_OFFSET:end]
+
+
+def read_custom_frame(fd: int, which: int = 1) -> bytes:
+    """Read one 1024-byte custom (per-key) frame: 1 -> ``09 cc``, 2 -> ``09 d0``."""
+    command = CUSTOM1_READ_COMMAND if which == 1 else CUSTOM2_READ_COMMAND
+    if which not in (1, 2):
+        raise ValueError("custom frame must be 1 or 2")
+    response = mailbox_read(fd, command)
+    end = CONFIG_RESPONSE_OFFSET + 1024
+    if len(response) < end:
+        raise ProtocolError(
+            "the custom-frame response is only %d bytes; expected at least %d"
+            % (len(response), end)
+        )
+    return response[CONFIG_RESPONSE_OFFSET:end]
+
+
+def read_profile(fd: int) -> bytes:
+    """Read the 1024-byte profile/keymap table (not modified by this tool)."""
+    response = mailbox_read(fd, PROFILE_READ_COMMAND)
+    end = CONFIG_RESPONSE_OFFSET + 1024
+    if len(response) < end:
+        raise ProtocolError(
+            "the profile response is only %d bytes; expected at least %d"
+            % (len(response), end)
+        )
+    return response[CONFIG_RESPONSE_OFFSET:end]
+
+
+# --------------------------------------------------------------------------
+# Configuration parsing and building
+# --------------------------------------------------------------------------
+
+
+class ConfigError(ProtocolError):
+    """The config block does not have the shape captured from the K622."""
+
+
+ModeParams = namedtuple("ModeParams", "color speed brightness")
+
+
+def _check_byte(value, label):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("%s must be an integer" % label)
+    if not 0 <= value <= 255:
+        raise ValueError("%s must be 0..255" % label)
+    return value
+
+
+def validate_config(config) -> bytes:
+    """Refuse a config that is not the captured K622 136-byte block shape."""
+    if not isinstance(config, (bytes, bytearray, memoryview)):
+        raise TypeError("config must be bytes-like")
+    config = bytes(config)
+    if len(config) != CONFIG_SIZE:
+        raise ConfigError(
+            "config block is %d bytes; expected %d" % (len(config), CONFIG_SIZE)
+        )
+    if config[0x08:0x0A] != b"\x03\x03":
+        raise ConfigError(
+            "refusing config without the captured 03 03 marker at offset 0x08"
+        )
+    if config[CONFIG_TRAILER_INDEX:CONFIG_TRAILER_INDEX + 2] != CONFIG_TRAILER:
+        raise ConfigError(
+            "refusing config without the captured 5a a5 marker at offset 0x%02x"
+            % CONFIG_TRAILER_INDEX
+        )
+    mode = config[CONFIG_MODE_INDEX]
+    if mode > MAX_MODE:
+        raise ConfigError("refusing config with unknown mode id %d" % mode)
+    if config[CONFIG_PER_KEY_INDEX] not in (0, 1):
+        raise ConfigError(
+            "refusing config with non-boolean per-key flag %d"
+            % config[CONFIG_PER_KEY_INDEX]
+        )
+    return config
+
+
+def parse_config(config) -> "ConfigState":
+    """Decode the 136-byte config into mode, per-key flag and per-mode params."""
+    config = validate_config(config)
+    pairs = []
+    for index in range(CONFIG_PAIR_COUNT):
+        base = CONFIG_PAIR_BASE + index * 2
+        packed = config[base + 1]
+        pairs.append(
+            ModeParams(
+                color=config[base] & 0x0F,
+                speed=(packed >> 4) & 0x0F,
+                brightness=packed & 0x0F,
+            )
+        )
+    return ConfigState(
+        mode=config[CONFIG_MODE_INDEX],
+        per_key=bool(config[CONFIG_PER_KEY_INDEX]),
+        pairs=tuple(pairs),
+        raw=config,
+    )
+
+
+class ConfigState:
+    """Decoded lighting config."""
+
+    __slots__ = ("mode", "per_key", "pairs", "raw")
+
+    def __init__(self, mode, per_key, pairs, raw):
+        self.mode = mode
+        self.per_key = per_key
+        self.pairs = pairs
+        self.raw = raw
+
+    @property
+    def info(self) -> ModeInfo:
+        return MODE_BY_VALUE[self.mode]
+
+    def params(self, mode) -> ModeParams:
+        info = lookup_mode(mode)
+        if not 1 <= info.value <= 20:
+            raise ValueError("mode %s has no per-mode parameters" % info.name)
+        return self.pairs[info.value - 1]
+
+    def __repr__(self):
+        return "ConfigState(mode=%d, per_key=%r, pairs=%r)" % (
+            self.mode, self.per_key, self.pairs
+        )
+
+
+def build_config(base, *, mode=None, per_key=None, brightness=None,
+                 speed=None, color=None) -> bytes:
+    """Return a modified copy of ``base`` with the requested mode settings."""
+    config = bytearray(validate_config(base))
+    info = None
+    if mode is not None:
+        info = lookup_mode(mode)
+        config[CONFIG_MODE_INDEX] = info.value
+        config[CONFIG_PER_KEY_INDEX] = 1 if info.value == PER_KEY_MODE else 0
+    if per_key is not None:
+        config[CONFIG_PER_KEY_INDEX] = 1 if per_key else 0
+    if info is None:
+        info = MODE_BY_VALUE[config[CONFIG_MODE_INDEX]]
+    if brightness is not None or speed is not None or color is not None:
+        if not 1 <= info.value <= 20:
+            raise ValueError(
+                "mode %s does not have brightness/speed/colour parameters"
+                % info.name
+            )
+        base_index = CONFIG_PAIR_BASE + (info.value - 1) * 2
+        current = ModeParams(
+            color=config[base_index] & 0x0F,
+            speed=(config[base_index + 1] >> 4) & 0x0F,
+            brightness=config[base_index + 1] & 0x0F,
+        )
+        if brightness is not None:
+            if isinstance(brightness, bool) or not isinstance(brightness, int):
+                raise ValueError("brightness must be an integer")
+            if not BRIGHTNESS_MIN <= brightness <= BRIGHTNESS_MAX:
+                raise ValueError(
+                    "brightness must be %d..%d"
+                    % (BRIGHTNESS_MIN, BRIGHTNESS_MAX)
+                )
+        if speed is not None:
+            if isinstance(speed, bool) or not isinstance(speed, int):
+                raise ValueError("speed must be an integer")
+            if not SPEED_MIN <= speed <= SPEED_MAX:
+                raise ValueError("speed must be %d..%d" % (SPEED_MIN, SPEED_MAX))
+        if color is not None:
+            if isinstance(color, bool) or not isinstance(color, int):
+                raise ValueError("colour index must be an integer")
+            if not 0 <= color <= COLOR_RANDOM:
+                raise ValueError(
+                    "colour index must be 0..%d (7 = random)" % COLOR_INDEX_MAX
+                )
+            if color == COLOR_RANDOM and not info.random:
+                raise ValueError("mode %s does not support random colour" % info.name)
+            if color != COLOR_RANDOM and not info.color:
+                raise ValueError("mode %s does not support a specific colour" % info.name)
+        new_color = current.color if color is None else color
+        new_brightness = (
+            current.brightness if brightness is None else brightness
+        )
+        new_speed = current.speed if speed is None else speed
+        config[base_index] = new_color & 0x0F
+        config[base_index + 1] = ((new_speed & 0x0F) << 4) | (new_brightness & 0x0F)
+    return bytes(config)
+
+
+def build_config_packet(config) -> bytes:
+    """Build the report-0x06 ``03 c6`` frame around a 136-byte config block."""
+    config = validate_config(config)
+    packet = bytearray(PACKET_SIZE)
+    packet[: len(CONFIG_WRITE_HEADER)] = CONFIG_WRITE_HEADER
+    packet[len(CONFIG_WRITE_HEADER):len(CONFIG_WRITE_HEADER) + CONFIG_SIZE] = config
+    return bytes(packet)
+
+
+def write_config(fd: int, config) -> int:
+    """Write a validated 136-byte config block with report 0x06."""
+    packet = build_config_packet(config)
+    buffer = bytearray(packet)
+    try:
+        return fcntl.ioctl(fd, hidiocsfeature(len(buffer)), buffer)
+    except OSError as exc:
+        raise _map_write_error(exc) from exc
+
+
+def validate_effect_palette(palette) -> bytes:
+    if not isinstance(palette, (bytes, bytearray, memoryview)):
+        raise TypeError("palette must be bytes-like")
+    palette = bytes(palette)
+    if len(palette) != COLOR_TABLE_SIZE:
+        raise ConfigError(
+            "effect palette is %d bytes; expected %d"
+            % (len(palette), COLOR_TABLE_SIZE)
+        )
+    return palette
+
+
+def build_effect_palette_packet(palette) -> bytes:
+    palette = validate_effect_palette(palette)
+    packet = bytearray(PACKET_SIZE)
+    packet[: len(COLOR_WRITE_HEADER)] = COLOR_WRITE_HEADER
+    packet[len(COLOR_WRITE_HEADER):len(COLOR_WRITE_HEADER) + COLOR_TABLE_SIZE] = palette
+    return bytes(packet)
+
+
+def write_effect_palette(fd: int, palette) -> int:
+    packet = build_effect_palette_packet(palette)
+    buffer = bytearray(packet)
+    try:
+        return fcntl.ioctl(fd, hidiocsfeature(len(buffer)), buffer)
+    except OSError as exc:
+        raise _map_write_error(exc) from exc
+
+
+def palette_color(palette, mode, index) -> Color:
+    """Return ``(r, g, b)`` for one effect palette entry."""
+    mode = lookup_mode(mode).value
+    if not 1 <= mode <= COLOR_BLOCKS - 1:
+        raise ValueError("mode %d has no effect palette block" % mode)
+    if not 0 <= index <= COLOR_INDEX_MAX:
+        raise ValueError("colour index must be 0..%d" % COLOR_INDEX_MAX)
+    palette = validate_effect_palette(palette)
+    base = mode * COLOR_BLOCK_SIZE + index * 3
+    return tuple(palette[base:base + 3])
+
+
+def set_palette_color(palette, mode, index, color) -> bytes:
+    """Return a copy of ``palette`` with one entry set to ``color``."""
+    palette = bytearray(validate_effect_palette(palette))
+    mode = lookup_mode(mode).value
+    if not 1 <= mode <= COLOR_BLOCKS - 1:
+        raise ValueError("mode %d has no effect palette block" % mode)
+    if not 0 <= index <= COLOR_INDEX_MAX:
+        raise ValueError("colour index must be 0..%d" % COLOR_INDEX_MAX)
+    red, green, blue = _checked_color(color)
+    base = mode * COLOR_BLOCK_SIZE + index * 3
+    palette[base:base + 3] = bytes((red, green, blue))
+    return bytes(palette)
+
+
+# --------------------------------------------------------------------------
+# Custom (per-key) frames: read and write
+# --------------------------------------------------------------------------
+
+CUSTOM_HEADERS = {
+    1: bytes.fromhex("06 09 cc 00 40 00 00 00"),
+    2: bytes.fromhex("06 09 d0 00 40 00 00 00"),
+}
+CUSTOM_PAYLOAD_SIZE = 1024
+
+
+def build_custom_packet(payload, which: int = 1) -> bytes:
+    """Build a ``09 cc`` (which=1) or ``09 d0`` (which=2) frame."""
+    if which not in CUSTOM_HEADERS:
+        raise ValueError("custom frame must be 1 or 2")
+    payload = bytes(payload)
+    if len(payload) != CUSTOM_PAYLOAD_SIZE:
+        raise ConfigError(
+            "custom frame payload is %d bytes; expected %d"
+            % (len(payload), CUSTOM_PAYLOAD_SIZE)
+        )
+    packet = bytearray(PACKET_SIZE)
+    header = CUSTOM_HEADERS[which]
+    packet[: len(header)] = header
+    packet[len(header):len(header) + CUSTOM_PAYLOAD_SIZE] = payload
+    return bytes(packet)
+
+
+def write_custom_frame(fd: int, payload, which: int = 1) -> int:
+    packet = build_custom_packet(payload, which)
+    buffer = bytearray(packet)
+    try:
+        return fcntl.ioctl(fd, hidiocsfeature(len(buffer)), buffer)
+    except OSError as exc:
+        raise _map_write_error(exc) from exc
+
+
+def palette_from_response(response) -> bytes:
+    """Extract the 441-byte effect palette from a ``88 c8`` read response."""
+    response = bytes(response)
+    end = CONFIG_RESPONSE_OFFSET + COLOR_TABLE_SIZE
+    if len(response) < end:
+        raise ProtocolError(
+            "palette response is %d bytes; need at least %d" % (len(response), end)
+        )
+    return response[CONFIG_RESPONSE_OFFSET:end]
+
+
+def payload_from_response(response, size: int) -> bytes:
+    """Extract ``size`` payload bytes from a report-0x06 read response."""
+    if not isinstance(size, int) or size <= 0:
+        raise ValueError("payload size must be a positive integer")
+    response = bytes(response)
+    end = CONFIG_RESPONSE_OFFSET + size
+    if len(response) < end:
+        raise ProtocolError(
+            "response is %d bytes; need at least %d" % (len(response), end)
+        )
+    return response[CONFIG_RESPONSE_OFFSET:end]

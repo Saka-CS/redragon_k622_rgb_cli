@@ -3,7 +3,8 @@
 The LED packet contains **126 RGB slots**. This document maps them.
 
 - **Slots `0–101`** — 87 main keys, taken from the official `Cfg.ini`.
-- **Slots `102–125`** — unknown; G/MR/media candidates and/or dead slots.
+- **Slots `102–125`** — G/MR/media keys and dead slots; discovered by
+  `k622rgb calibrate`.
 - **Dead slots in `0–101`** — 15 slots with no LED.
 
 The official `Cfg.ini` line format is:
@@ -154,9 +155,18 @@ be calibrated.
 The physical board shows **G1–G4 + MR**, not a separate G5. `Cfg.ini`'s `[FN]`
 section lists G1–G5; G5 may be an alias for MR or a sibling-variant entry.
 
-Until calibration, the CLI rejects `G1`/`MR`/`RGB`/… as unknown names. Use the
-numeric escape instead, e.g. `k622rgb set slot:102=ffffff`, and record which
-physical key lights up.
+Run `k622rgb calibrate` to map these slots. It lights one slot at a time and
+accepts a key name (`G1`–`G5`, `MR`, `RGB`, `Prev`, `Play`, `Next`, `Mute`,
+`Volume`), a comma-separated list when one slot lights several keys, `none` for
+a dead slot, `skip` to leave a slot uncalibrated, `undo` to go back, or `quit`
+to stop. Any other text is stored as-is, so a mistaken key can be reported;
+`k622rgb list` flags main-key names (`Esc (main key!)`) and unknown labels
+(`Bogus (unexpected)`). Progress is saved after every answer. Use
+`k622rgb calibrate --verify` to light the mapped slots again.
+
+Until a slot is calibrated, the CLI rejects `G1`/`MR`/`RGB`/… with an
+actionable message. The numeric escape always works:
+`k622rgb set slot:102=ffffff`.
 
 ## Calibration output
 

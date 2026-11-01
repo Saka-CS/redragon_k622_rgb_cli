@@ -4,8 +4,9 @@
 - **Hardware:** Redragon K622 Horus TKL RGB, wired USB
 - **USB ID:** `258a:0049`
 - **Host:** Linux, Python 3.14.8, Hyprland/Omarchy desktop
-- **Status:** read and write paths verified on the physical K622; only extra
-  slot calibration remains
+- **Status:** per-key writes, built-in effects, brightness/speed, effect
+  palette and config backup/restore are implemented and verified on the
+  physical K622; only extra-slot calibration remains
 
 ## 1. Objective
 
@@ -147,10 +148,11 @@ Run against the physical K622 with `/dev/hidraw6` (IF1):
 | `./bin/k622rgb dump --report 6` | **`EPIPE`** — the device stalls the GET |
 
 The report-5 read is stable across retries. The report-6 GET stall means report
-`0x06` cannot be read in isolation and cannot currently be used for a read-back
-backup. The official app first sends a report-5 command `83 C6 00 00 00`,
-sleeps 20 ms, then reads report `0x06`; the capture shows a 262-byte response
-beginning `06 83 c6 ...`. That handshake has not been sent by this tool yet.
+`0x06` cannot be read in isolation; the official app first sends a report-5
+command (`83 c6 00 00 00`), sleeps 20 ms, then reads report `0x06`. That
+handshake is implemented: `05 83 c6` returns a 262-byte config, `05 88 c8`
+returns the effect palette, `05 89 cc`/`05 89 d0` return the custom frames,
+and `05 84 d8` returns the profile table.
 
 Full descriptor hex dumps are in [PROTOCOL.md](PROTOCOL.md).
 
@@ -482,10 +484,15 @@ on the K622 produced the 5-second `ETIMEDOUT` that motivated this pivot.
 | Write implementation (`set`, allowlist, state) | **Implemented, unit-tested** | 163 tests; `--dry-run` |
 | Hardware write (`set Esc=red`) | **Confirmed** | Esc red; `1` green; `--off` clears |
 | Additive saved-frame behaviour | **Confirmed on hardware** | Second `set` kept the first colour |
-| `09 d0` / `03 c6` companions | **Not required** | Colour frame alone works on hardware |
-| Read-back backup for report 6 | **Blocked** | Colour frame is not readable; local write-ahead record only |
+| `09 d0` / `03 c6` companions | **Not required for per-key colours** | Colour frame alone works; `03 c6` is used for mode config |
+| Config read (`05 83 c6` → 136 B at response `0x08`) | **Confirmed** | Hardware read + no-op write round trip |
+| Effect palette (`05 88 c8` / `08 c8`, 441 B) | **Confirmed** | Hardware write/read round trip |
+| 20 effects + Self-define + OFF | **Confirmed** | Mode sweep on hardware + official UI under Wine 11 |
+| Brightness 0–9 / speed 1–4 | **Confirmed** | Config pair write/read; UI sliders |
+| Direction control | **Not present** | `Cfg.ini` `direct=0` for every mode; UI has no direction control |
+| Read-back backup for report 6 | **Confirmed** | `05 89 cc` returns the custom frame; `set --from-device` uses it |
 | Extra keys on slots `102–125` | **Unknown** | Not in `Cfg.ini`; calibration required |
-| Lighting persistence across power cycle | **Unknown** | Not tested |
+| Lighting persistence across power cycle | **Likely** | Config persists across writes/replugs; explicit power-cycle test still pending |
 | Built-in effect override behavior | **Unknown** | Not tested |
 | Volume roller addressability | **Unknown** | Not a key; may have no LED |
 
@@ -611,3 +618,36 @@ installer was downloaded from the official Redragon CDN and was never executed.
 - Official installer: `https://cdn.shopify.com/s/files/1/0012/4957/4961/files/Redragon_K622-RGB_Setup_V1.6.6_20211105.exe`
 - Linux kernel raw-request path: `drivers/hid/hidraw.c`,
   `drivers/hid/hid-core.c`, `drivers/hid/usbhid/hid-core.c`
+
+
+## 11. Follow-up (2026-11-01): modes, palette and config
+
+The official app was also run under **Wine 11** (Flatpak) with the physical
+keyboard. Its lighting tab exposed exactly the expected option set:
+
+- 20 effects in the `text.xml` order, plus **Self-define** and **OFF**;
+- brightness slider `0–9`;
+- speed slider `1–4`;
+- an **RGB** checkbox (the firmware random palette);
+- a custom colour picker (written to palette entry 0);
+- no direction control.
+
+The config mailbox was decoded and verified on hardware:
+
+```text
+read  05 83 c6 00 00 00 -> report 6, 262 bytes (config at 0x08)
+write 06 03 c6 00 40    -> 136-byte config block
+```
+
+The 136-byte block holds the current mode at `0x0D`, the per-key flag at
+`0x0C`, and 20 two-byte effect parameter pairs at `0x1E`. Each pair is
+`[colour, (speed << 4) | brightness]`, with colour `7` meaning random.
+
+The effect palette is a separate 441-byte table read with `05 88 c8` and
+written with `06 08 c8 00 40`: 21 blocks of 21 bytes (block 0 OFF, blocks 1–20
+effects, each seven RGB triples). The custom per-key frame is readable with
+`05 89 cc`; its 1024-byte payload matches the `09 cc` write payload exactly.
+
+`Cfg.ini`'s `LedOpt1..LedOpt20` rows supply the per-mode feature flags
+(speed, brightness, random, colour). The `GaoshouKey*` / `GameGpMask` rows
+belong to key-group features, not the lighting tab, and are not implemented.
