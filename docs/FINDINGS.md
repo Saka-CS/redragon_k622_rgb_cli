@@ -4,7 +4,8 @@
 - **Hardware:** Redragon K622 Horus TKL RGB, wired USB
 - **USB ID:** `258a:0049`
 - **Host:** Linux, Python 3.14.8, Hyprland/Omarchy desktop
-- **Status:** research complete; hardware protocol verification pending (Phase 0)
+- **Status:** read and write paths verified on the physical K622; only extra
+  slot calibration remains
 
 ## 1. Objective
 
@@ -116,29 +117,82 @@ crw------- 1 root root 243, 6 ... /dev/hidraw6
 
 | ID | Type | Size | Usage | Notes |
 |---:|---|---|---|---|
-| `0x01` | Input | 3 bits + 5 pad | `0x01` / `0x80` | System control (power/sleep/wake) |
-| `0x02` | Input | 16-bit array | `0x0C` / `0x01` | Consumer control |
+| `0x01` | Input | 3 bits + 5 pad = 1 B | `0x01` / `0x80` | System control (power/sleep/wake) |
+| `0x02` | Input | 16-bit array = 2 B | `0x0C` / `0x01` | Consumer control |
 | `0x03` | Input | 3 bytes | `0xFF00` / `0x2F` | Vendor |
-| `0x04` | Input | 120 bits (15 B) | `0x01` / `0x06` | Keyboard report for extra keys |
-| `0x05` | Feature | 5 bytes | `0xFF00` / `0x01` | Vendor |
-| `0x06` | Feature | **1031 bytes** | `0xFF00` / `0x01` | Vendor; **never touch** (firmware/config risk) |
-| `0x07` | Input | Mouse | `0x01` / `0x02` | 5 buttons, X/Y, wheel, AC pan |
-| `0x08` | **Not declared** | 382 bytes used | — | LED frame; accepted by this controller family |
+| `0x04` | Input | 120 bits = 15 B | `0x01` / `0x06` | Keyboard report for extra keys |
+| `0x05` | Feature | 5 bytes | `0xFF00` / `0x01` | Vendor mailbox/status |
+| `0x06` | Feature | **1031 bytes** | `0xFF00` / `0x01` | Vendor payload; 1032 with report ID |
+| `0x07` | Input | Mouse, 7 B | `0x01` / `0x02` | 5 buttons, X/Y, wheel, AC pan |
+| `0x08` | — | **not declared** | — | Does not exist on this board |
 
-The LED report `0x08` is not in the descriptor. The reference project uses it on
-a board whose descriptor is byte-for-byte identical, and the official K622
-software builds a 126-slot RGB payload. The kernel's raw-request path does not
-require the report ID to be declared:
+The report descriptor is stored at `tests/data/k622-if1-descriptor.bin`
+(227 bytes, sha256
+`32771137a995e90b6fa9d210761c23ce61e60a21accd033b86f484f198a5061c`) and is
+parsed by `k622rgb/controller.py`.
 
-- `hidraw` passes `buf[0]` as the report number to `__hid_hw_raw_request()`.
-- `__hid_hw_raw_request()` forwards it to the transport's `raw_request()`.
-- `usbhid_set_raw_report()` builds a class `SET_REPORT` control transfer with
-  `((rtype + 1) << 8) | reportnum`.
+The earlier project premise that a 382-byte feature report `0x08` could be sent
+is **false for the K622**. Report `0x08` is absent from the descriptor; sending
+it made `HIDIOCSFEATURE` block for 5 seconds and fail with `ETIMEDOUT`.
 
-The device firmware, not the kernel, decides whether to accept the undeclared
-report. Hardware verification is still required.
+### 3.3 Hardware read recon (2026-11-01)
+
+Run against the physical K622 with `/dev/hidraw6` (IF1):
+
+| Command | Result |
+|---|---|
+| `./bin/k622rgb info` | descriptor 227 B, known hash, 7 reports, no `0x08` |
+| `./bin/k622rgb check` | open read-only OK; descriptor and sizes OK |
+| `./bin/k622rgb dump --report 5` | `05 01 02 00 00 00` (6 bytes) |
+| `./bin/k622rgb dump --report 6` | **`EPIPE`** — the device stalls the GET |
+
+The report-5 read is stable across retries. The report-6 GET stall means report
+`0x06` cannot be read in isolation and cannot currently be used for a read-back
+backup. The official app first sends a report-5 command `83 C6 00 00 00`,
+sleeps 20 ms, then reads report `0x06`; the capture shows a 262-byte response
+beginning `06 83 c6 ...`. That handshake has not been sent by this tool yet.
 
 Full descriptor hex dumps are in [PROTOCOL.md](PROTOCOL.md).
+
+### 3.4 Lighting-write capture (2026-11-01)
+
+A binary usbmon capture of the official Windows app changing colours contains
+13 complete lighting updates. Each update is three report-6 `SetFeature`
+writes in this order:
+
+| Order | Payload prefix | Length | Varies with colour? |
+|---:|---|---:|---|
+| 1 | `06 09 cc 00 40` | 1032 B | **yes** |
+| 2 | `06 09 d0 00 40` | 1032 B | no |
+| 3 | `06 03 c6 00 00` | 1032 B | no |
+
+Only the `09 cc` frame changes. Its bytes 8..133 are the red plane, 134..259
+the green plane, and 260..385 the blue plane, each with slot 0 first. Bytes
+386..1031 are byte-for-byte constant. The all-off frame is stored at
+`k622rgb/data/template_color.bin` (sha256
+`5d922916bdeadf7bfc3676a00855b8c0b9e05562e083d344d67dd58c73e4626a`).
+
+The tool builds a frame by copying that template, writing the three planes,
+and checking the header and tail before `HIDIOCSFEATURE(1032)`. It sends only
+the `09 cc` frame.
+
+### 3.5 Hardware write verification (2026-11-01)
+
+| Step | Command | Observed |
+|---|---|---|
+| Single colour frame | `set --no-state Esc=red` | Esc red, everything else dark |
+| Additive frame | `set Esc=red`, then `set 1=green` | Esc red **and** `1` green |
+| Clear | `set --off` | all LEDs dark; saved frame hash = template hash |
+
+The colour frame alone is sufficient. The constant `09 d0` and `03 c6`
+companions captured alongside it are **not required** for per-key colours and
+remain unsent. The slot/plane mapping derived from `Cfg.ini` and the capture
+matches the physical board.
+
+Implementation note: CPython's `fcntl` refuses an immutable `bytes` ioctl
+argument over 1024 bytes (`ValueError: ioctl argument 3 is too long`). Passing
+a writable `bytearray` avoids the cap; the 1032-byte `HIDIOCSFEATURE` transfer
+then succeeds without a stall.
 
 ## 4. Official K622 software
 
@@ -389,25 +443,47 @@ The reference project only sends the LED report. It explicitly avoids
 firmware/bootloader commands and cites OpenRGB's disabled Sinowealth driver as
 a reason to stay on the LED path.
 
+**However, its report ID `0x08` is not transferable to the K622.** The K622
+descriptor (and the reference document's own verbatim descriptor) declares only
+feature reports `0x05` and `0x06`; report `0x08` does not exist. Attempting it
+on the K622 produced the 5-second `ETIMEDOUT` that motivated this pivot.
+
 ### 6.2 Official software corroboration
 
 - `Cfg.ini` maps 87 keys to LED slots `0–101` exactly like the reference.
 - `RGBIndex=0,1,2` confirms R,G,B order.
-- `KeyboardDrv.exe` builds a 126-slot / 378-byte RGB buffer.
-- `Lowerdev.dll` uses `HidD_SetFeature`, the Windows equivalent of
-  `HIDIOCSFEATURE`.
-- The K622's IF1 descriptor is byte-for-byte identical to the KS82-B descriptor
-  documented by the reference project.
+- `KeyboardDrv.exe` builds a 126-slot / 378-byte RGB buffer and uses 126-byte
+  planes (`imul ..., 0x7e`).
+- Big vendor transfers use a 1032-byte buffer: report `0x06` plus 1031 data
+  bytes, matching the descriptor's `96 07 04`.
+- Short commands use report `0x05` (5 data bytes).
+- Captured report-6 lighting sequence: `09 cc 00 40` (colour), `09 d0 00 40`
+  (constant latch/effect), `03 c6 00 00` (constant config).
+- Other captured report-6 writes: `04 d8 00 40` (profile apply/read-back pair),
+  `09 00 40` + 1024 data bytes, and `03 c6` + 136 config bytes.
+- The official read path is `SetFeature(report 5, 83 C6 00 00 00)` → 20 ms →
+  `GetFeature(report 6, 1032)`; the capture shows a 262-byte config response
+  starting `06 83 c6 ...`, while `84 d8` returns 1032 bytes.
+- `Lowerdev.dll` wraps `HidD_SetFeature` / `HidD_GetFeature`.
 
 ### 6.3 Confidence table
 
 | Claim | Confidence | Basis |
 |---|---|---|
 | USB VID/PID and interface layout | **Confirmed** | `lsusb`, sysfs, `udevadm` |
+| IF1 declares only reports 1–7, no `0x08` | **Confirmed** | Live descriptor parse + fixture hash |
+| Report `0x05` readable | **Confirmed** | Hardware: `05 01 02 00 00 00` |
+| Report `0x06` GET stalls | **Confirmed** | Hardware: `EPIPE` |
+| Official read handshake (`83 C6` → report 6) | **Confirmed by capture** | usbmon: `06 83 c6 …`, 262 B |
 | Main 87 keys on slots `0–101` | **Confirmed** | Official `Cfg.ini` + reference map |
-| 126-slot / 378-byte RGB payload | **Confirmed** | Official driver constants/loops |
+| 126-slot / 126-byte planes | **Confirmed by capture** | R `8`, G `134`, B `260` |
 | RGB channel order R,G,B | **Confirmed** | `Cfg.ini` `RGBIndex=0,1,2` |
-| Report `0x08` + header `0A 7A 01` accepted | **Strong inference** | Reference on identical descriptor; official payload size; not hardware-tested |
+| Report-6 lighting write packet | **Captured** | `09 cc` + 13 complete updates |
+| Write implementation (`set`, allowlist, state) | **Implemented, unit-tested** | 163 tests; `--dry-run` |
+| Hardware write (`set Esc=red`) | **Confirmed** | Esc red; `1` green; `--off` clears |
+| Additive saved-frame behaviour | **Confirmed on hardware** | Second `set` kept the first colour |
+| `09 d0` / `03 c6` companions | **Not required** | Colour frame alone works on hardware |
+| Read-back backup for report 6 | **Blocked** | Colour frame is not readable; local write-ahead record only |
 | Extra keys on slots `102–125` | **Unknown** | Not in `Cfg.ini`; calibration required |
 | Lighting persistence across power cycle | **Unknown** | Not tested |
 | Built-in effect override behavior | **Unknown** | Not tested |
@@ -442,7 +518,7 @@ Implications:
 | Controller | Sinowealth | Sinowealth |
 | Descriptor | Documented, identical to K622 | Identical to reference |
 | Layout | Full-size, 108 LEDs | TKL, 87 main keys + extras |
-| Packet | 382-byte feature report `0x08` | Same expected |
+| Packet | 382-byte feature report `0x08` (not valid on K622) | Captured report `0x06` `09 cc`, 1032 B |
 | Language | Pure Python stdlib | Same |
 | CLI | `ks82rgb` | `k622rgb` |
 | Features | CLI, effects, profiles, daemon, GUI, MQTT, plugins, ambient modes | Core CLI + effects + profiles only |
@@ -456,26 +532,30 @@ future work.
 
 ## 9. Open questions and risks
 
-1. **Report `0x08` acceptance** — The descriptor is identical and the official
-   payload size matches, but the K622 firmware has not been tested. Phase 0 is
-   the gate.
-2. **Extra-key addressability** — Slots `102–125` may contain G/MR/media LEDs,
+1. **Report-6 write packet** — Resolved. The captured `09 cc` frame alone sets
+   per-key colours on hardware; the `09 d0` latch and `03 c6` config packets
+   are not needed and remain unsent.
+2. **Read-back backup** — Report `0x06` GET stalls in isolation. The captured
+   handshake returns the config, not the colour buffer, so a true read-back is
+   still unavailable. The CLI stores the frame it last wrote as a local
+   write-ahead record instead.
+3. **Extra-key addressability** — Slots `102–125` may contain G/MR/media LEDs,
    dead slots, or a mix. Calibration is required.
-3. **Built-in effect override** — If the board is in a hardware effect, a
-   single per-key frame may be ignored or overridden. Phase 0 will show whether
-   a mode-select command is needed.
-4. **Persistence** — Lighting likely resets on power cycle. The tool will not
+4. **Built-in effect override** — If the board is in a hardware effect, a
+   single per-key frame may be ignored or overridden. The write test will show
+   whether a mode-select command is needed.
+5. **Persistence** — Lighting likely resets on power cycle. The tool will not
    write onboard memory unless proven safe.
-5. **udev/uaccess timing** — `TAG+="uaccess"` depends on the login seat. If the
+6. **udev/uaccess timing** — `TAG+="uaccess"` depends on the login seat. If the
    ACL does not appear, fall back to `MODE="0666"` or a dedicated group.
-6. **Frame rate/flicker** — 30 FPS over hidraw should be fine, but the board may
+7. **Frame rate/flicker** — 30 FPS over hidraw should be fine, but the board may
    tear or flicker. Tune FPS and consider skipping unchanged frames.
-7. **Regional/wireless variants** — US QWERTY wired only. ISO, Bluetooth, and
+8. **Regional/wireless variants** — US QWERTY wired only. ISO, Bluetooth, and
    2.4 GHz variants are out of scope.
-8. **Shared K618/K622 config** — Some `Cfg.ini` entries (e.g., G5) may belong to
+9. **Shared K618/K622 config** — Some `Cfg.ini` entries (e.g., G5) may belong to
    a sibling variant. Calibration resolves what this board actually has.
-9. **Label typo** — `SrcLock` in `Cfg.ini` is normalized to `ScrLk`.
-10. **Multiple keyboards/concurrency** — Another tool (official software in a
+10. **Label typo** — `SrcLock` in `Cfg.ini` is normalized to `ScrLk`.
+11. **Multiple keyboards/concurrency** — Another tool (official software in a
     VM, OpenRGB, a second instance) could fight for the device. The CLI should
     detect and report a busy/invalid device rather than silently corrupt frames.
 
@@ -508,7 +588,15 @@ The installer and extracted files live under `/tmp/opencode/k622/`:
 /tmp/opencode/k622/extracted/app/Lowerdev.dll
 /tmp/opencode/k622/extracted/app/skins/keyimg.png
 /tmp/opencode/k622/extracted/app/Text/en/text.xml
+/tmp/k622/usbmon.jsonl                 # binary usbmon capture
+/tmp/k622/template_color.bin           # all-off 09 cc frame
+/tmp/k622/template_latch.bin           # constant 09 d0 frame
+/tmp/k622/template_config.bin          # constant 03 c6 frame
 ```
+
+The all-off colour template is also committed as
+`k622rgb/data/template_color.bin` because the tool verifies it by hash before
+every write.
 
 These are research artifacts and are **not** part of the repository. The
 installer was downloaded from the official Redragon CDN and was never executed.

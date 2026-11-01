@@ -1,32 +1,38 @@
-# Protocol — Redragon K622 RGB LED control
+# Protocol — Redragon K622 RGB
 
 - **Device:** Redragon K622 Horus TKL RGB (wired USB)
 - **USB ID:** `258a:0049`
 - **Control interface:** IF1, usage page `0xFF00`, usage `0x01`
-- **LED transport:** HID feature report `0x08`, 382 bytes
-- **Status:** strongly inferred from the reference project and the official
-  software; **hardware verification pending**
+- **Declared vendor reports:** feature `0x05` (5 bytes), feature `0x06` (1031 bytes)
+- **Status:** read and write paths **verified on hardware**. The captured
+  `09 cc` colour frame is sufficient; `09 d0`/`03 c6` are not needed.
 
 ## 1. Summary
 
 The keyboard exposes two HID interfaces:
 
 - **IF0** — normal boot keyboard, used for typing.
-- **IF1** — vendor control interface. The LED frame is sent here as a HID
-  **feature report** with `HIDIOCSFEATURE`.
+- **IF1** — vendor control interface, accessed through `/dev/hidrawN`.
 
-The expected LED frame is:
+IF1's report descriptor declares exactly seven reports and **no report `0x08`**:
 
-```text
-byte 0       : 0x08                 report ID
-bytes 1..3   : 0x0A 0x7A 0x01       command header
-bytes 4..381 : 126 × RGB triples    per-slot colors (378 bytes)
-total        : 382 bytes
-```
+| ID | Type | Payload | Meaning |
+|---:|---|---:|---|
+| `0x01` | Input | 1 byte | System control |
+| `0x02` | Input | 2 bytes | Consumer control |
+| `0x03` | Input | 3 bytes | Vendor |
+| `0x04` | Input | 15 bytes | Extra keyboard keys |
+| `0x05` | Feature | 5 bytes | Vendor mailbox/status |
+| `0x06` | Feature | **1031 bytes** | Vendor configuration / LED state |
+| `0x07` | Input | 7 bytes | Mouse |
 
-Only this LED report is ever sent. Report `0x06` (the 1031-byte vendor feature
-report) is **never** used. There is no firmware, bootloader, flash, macro, or
-keymap path.
+Earlier revisions of this project sent a 382-byte feature report `0x08`. That
+report does not exist on this board; `HIDIOCSFEATURE` blocked for 5 seconds and
+failed with `ETIMEDOUT`. It is no longer referenced anywhere in the tool.
+
+The official `KeyboardDrv.exe` uses report `0x06` for the big vendor payload and
+report `0x05` for short commands. The 126-slot LED data is carried inside
+report `0x06` as 126-byte planes, matching `RGBIndex=0,1,2` in `Cfg.ini`.
 
 ## 2. USB identity
 
@@ -53,17 +59,10 @@ and interface number.
 
 ## 3. Interfaces
 
-| Interface | hidraw | Usage page/usage | Class/subclass/protocol | Endpoint | Purpose |
-|---|---|---|---|---|---|
-| IF0 | `/dev/hidraw5` | `0x01` / `0x06` | `3` / `1` / `1` | `0x81`, 8-byte interrupt | Boot keyboard |
-| IF1 | `/dev/hidraw6` | `0xFF00` / `0x01` | `3` / `0` / `0` | `0x82`, 16-byte interrupt | Vendor control |
-
-sysfs paths at research time:
-
-```text
-IF0: /sys/devices/pci0000:00/0000:00:14.0/usb1/1-6/1-6.4/1-6.4:1.0/0003:258A:0049.000D
-IF1: /sys/devices/pci0000:00/0000:00:14.0/usb1/1-6/1-6.4/1-6.4:1.1/0003:258A:0049.000E
-```
+| Interface | Usage page/usage | Class/subclass/protocol | Endpoint | Purpose |
+|---|---|---|---|---|
+| IF0 | `0x01` / `0x06` | `3` / `1` / `1` | `0x81`, 8-byte interrupt | Boot keyboard |
+| IF1 | `0xFF00` / `0x01` | `3` / `0` / `0` | `0x82`, 16-byte interrupt | Vendor control |
 
 `uevent` for both:
 
@@ -89,7 +88,7 @@ MODALIAS=hid:b0003g0001v0000258Ap00000049
 - No report ID.
 - 8 modifier bits, 1 reserved byte, 6 keycodes.
 - 5 LED output bits (Num/Caps/Scroll/Compose/Kana).
-- This is the normal typing interface. The tool never writes to it.
+- Normal typing interface; the tool never writes to it.
 
 ### 4.2 IF1 — vendor control (227 bytes, `0xE3`)
 
@@ -111,133 +110,200 @@ ff 7f 09 30 09 31 75 10 95 02 81 06 15 81 25 7f
 06 c0 c0
 ```
 
+The fixture is stored at `tests/data/k622-if1-descriptor.bin`:
+
+```text
+size:   227 bytes
+sha256: 32771137a995e90b6fa9d210761c23ce61e60a21accd033b86f484f198a5061c
+```
+
+The tool parses the descriptor itself and refuses to touch a feature report whose
+declared size differs from the captured sizes. A different descriptor hash is
+reported as `UNKNOWN` and blocks writes.
+
 ### 4.3 IF1 report IDs
 
-| ID | Type | Size | Usage | Notes |
-|---:|---|---|---|---|
-| `0x01` | Input | 3 bits + 5 pad | `0x01` / `0x80` | System control (power/sleep/wake) |
-| `0x02` | Input | 16-bit array | `0x0C` / `0x01` | Consumer control |
-| `0x03` | Input | 3 bytes | `0xFF00` / `0x2F` | Vendor |
-| `0x04` | Input | 120 bits (15 B) | `0x01` / `0x06` | Keyboard report for extra keys |
-| `0x05` | Feature | 5 bytes | `0xFF00` / `0x01` | Vendor |
-| `0x06` | Feature | **1031 bytes** | `0xFF00` / `0x01` | Vendor; **do not touch** |
-| `0x07` | Input | Mouse | `0x01` / `0x02` | 5 buttons, X/Y, wheel, AC pan |
-| `0x08` | **Not declared** | 382 bytes used | — | LED frame |
+| ID | Type | Size | Notes |
+|---:|---|---:|---|
+| `0x01` | Input | 3 bits + 5 pad = 1 B | System control |
+| `0x02` | Input | 16-bit array = 2 B | Consumer control |
+| `0x03` | Input | 3 × 8 bits = 3 B | Vendor |
+| `0x04` | Input | 120 bits = 15 B | Extra keyboard keys |
+| `0x05` | Feature | 5 × 8 bits = 5 B | Vendor mailbox/status |
+| `0x06` | Feature | 1031 × 8 bits = **1031 B** | Vendor payload |
+| `0x07` | Input | 1 + 32 + 8 + 8 = 7 B | Mouse |
+| `0x08` | — | **not declared** | Does not exist on this board |
 
-### 4.4 Why an undeclared report can work
+The reference KS82-B document's prose claims report 6 is 1796 bytes, but its own
+verbatim descriptor (`96 07 04`) says 1031. The captured K622 descriptor agrees:
+1031 payload bytes, 1032 with the report ID.
 
-The kernel's hidraw raw-request path does not validate the report ID against
-the descriptor:
+## 5. Read path — verified on hardware
 
-- `hidraw` passes `buf[0]` as the report number to `__hid_hw_raw_request()`.
-- `__hid_hw_raw_request()` forwards it to the transport's `raw_request()`.
-- `usbhid_set_raw_report()` sends a class `SET_REPORT` control transfer with:
+Reads use `HIDIOCGFEATURE(length)` where `length = 1 + payload_size`. The buffer
+must contain the report ID in byte 0 on entry; the kernel returns the report ID
+in byte 0 followed by the payload.
 
-  ```c
-  ((rtype + 1) << 8) | reportnum
-  ```
+| Report | Request | Buffer | Result on K622 |
+|---|---:|---:|---|
+| `0x05` | `0xC0064807` | 6 B | OK: `05 01 02 00 00 00` |
+| `0x06` | `0xC4084807` | 1032 B | **`EPIPE`** — the device stalls this GET |
 
-The device firmware, not the kernel, decides whether to accept report `0x08`.
-The reference project confirms acceptance on a board with an identical
-descriptor. The K622 still needs a hardware test.
+Report `0x06` is therefore **not readable in isolation**. The binary usbmon
+capture confirms the official read handshake: the app writes report 5
+`05 83 c6 00 00 00`, waits 20 ms, then reads report 6 and receives a 262-byte
+response starting `06 83 c6 ...`. A profile read uses `05 84 d8 00 00 00` and
+returns 1032 bytes starting `06 84 d8 ...`. The tool does **not** send either
+report-5 command yet.
 
-## 5. LED feature report
+## 6. Lighting write — captured from the official software
 
-### 5.1 Layout
+A binary `usbmon` capture of the official Windows app changing colours
+(2026-11-01) contains 13 complete lighting updates. Every update is three
+report-6 `SetFeature` transfers in this order:
 
-| Offset | Length | Value | Meaning |
-|---:|---:|---|---|
-| 0 | 1 | `0x08` | Report ID |
-| 1 | 1 | `0x0A` | Header byte 1 |
-| 2 | 1 | `0x7A` | Header byte 2 |
-| 3 | 1 | `0x01` | Header byte 3 |
-| 4 | 378 | 126 × `R G B` | Per-slot colors |
+| # | Report-6 payload prefix | Length | Meaning |
+|---:|---|---:|---|
+| 1 | `06 09 cc 00 40` | 1032 B | 126-slot RGB colour frame |
+| 2 | `06 09 d0 00 40` | 1032 B | constant latch/effect frame |
+| 3 | `06 03 c6 00 00` | 1032 B | constant config frame |
 
-Total: `4 + 378 = 382` bytes.
+Only the first packet varies with the chosen colours. Across all 13 captures:
 
-### 5.2 Examples
+- bytes `0..7` are `06 09 cc 00 40 00 00 00`;
+- bytes `8..133` are the **red** plane, slots 0..125;
+- bytes `134..259` are the **green** plane, slots 0..125;
+- bytes `260..385` are the **blue** plane, slots 0..125;
+- bytes `386..1031` are byte-for-byte constant (the latch/config tail).
 
-All LEDs off:
+The all-off frame is stored at `k622rgb/data/template_color.bin` (1032 bytes,
+sha256 `5d922916bdeadf7bfc3676a00855b8c0b9e05562e083d344d67dd58c73e4626a`).
+The tool copies it, writes only the three planes, and verifies that the header
+and the tail still match before `HIDIOCSFEATURE(1032)`.
+
+Current implementation: **only the `09 cc` frame is sent**, and the hardware
+test below shows that this is sufficient. It is the only packet that can be
+built from user colours, and it is the only packet the write allowlist accepts.
+`09 d0` and `03 c6` are captured and understood, but they are not sent.
+
+### 6.1 Capture sequence
 
 ```text
-08 0A 7A 01 00 00 00 ... 00     (378 zero bytes after the header)
+SET5  05 83 c6 00 00 00          # ask for the config
+GET6  06 83 c6 ... (262 bytes)   # config read-back
+SET6  06 09 cc 00 40 ...         # colour frame (the only write this tool sends)
+SET6  06 09 d0 00 40 ...         # constant latch/effect frame
+SET6  06 03 c6 00 00 ...         # constant config frame
 ```
 
-Esc (slot 0) red:
+The `09 d0` frame has sha256
+`ce6cd105d2b32142618f999ab961b99338bc55c2b4c3e2430cf0a1968bedd5fc`; the
+`03 c6` frame has sha256
+`ef5419a4b85f7aa6734506baf662b22d5f7cfe22f646db842b1872478a2d480e`.
+Both are byte-for-byte constant in the capture.
 
-```text
-08 0A 7A 01 FF 00 00 00 ... 00  (375 zero bytes after the red triple)
-```
+### 6.2 Read-back
 
-Slot `7` (the `1` key) green:
+The colour buffer cannot be read back. A standalone `GetFeature(0x06)` stalls
+with `EPIPE`, and the captured read handshake returns the 262-byte config, not
+the colour frame. The CLI therefore keeps a local **write-ahead record** of the
+last frame it sent (`$XDG_STATE_HOME/k622rgb/last-frame.bin`, or
+`~/.local/state/k622rgb/last-frame.bin`). This is not a device read-back; it
+only makes successive `set` calls additive. Use `--reset` to ignore it and
+start from the captured all-off frame.
 
-```text
-08 0A 7A 01 [21 zero bytes] 00 FF 00 [354 zero bytes]
-```
+### 6.3 Hardware verification (2026-11-01)
 
-The packet always contains all 126 slots. Unmapped/dead slots are zero-filled.
+Performed on the physical K622 through `/dev/hidraw6` with the udev `uaccess`
+rule in place. Every step succeeded on the first attempt:
 
-### 5.3 Color order
+| Step | Command | Observed |
+|---|---|---|
+| Single colour frame | `k622rgb set --no-state Esc=red` | Esc turned red; all other LEDs stayed off |
+| Additive frame | `k622rgb set Esc=red` then `k622rgb set 1=green` | Esc stayed red and `1` turned green |
+| Clear | `k622rgb set --off` | all LEDs off; saved frame hash equals the captured template |
 
-`Cfg.ini` contains:
+This confirms:
 
-```ini
-RGBIndex=0,1,2
-GameRGBIndex=0,1,2
-```
+- the `09 cc` colour frame alone changes the lighting — the captured `09 d0`
+  latch and `03 c6` config packets are **not** required for per-key colours;
+- the plane order and slot mapping (R `8`, G `134`, B `260`, `slot = col*6 +
+  row`) match the physical board;
+- the local write-ahead record correctly makes successive `set` calls additive.
 
-This means the packet order is **R, G, B**, not B, G, R. The probe will confirm
-visually.
+One implementation detail found during verification: CPython's `fcntl` module
+rejects an immutable `bytes` ioctl argument larger than 1024 bytes with
+`ValueError: ioctl argument 3 is too long`. A 1032-byte frame must be passed as
+a writable `bytearray`, which takes the unbounded direct-buffer path. The
+device accepted the 1032-byte `HIDIOCSFEATURE` transfer with no stall or
+timeout.
 
-## 6. Transport
+## 7. Official software evidence (static analysis)
 
-### 6.1 Open
+`KeyboardDrv.exe` (32-bit) and `Lowerdev.dll`:
+
+- Big vendor transfers use a 1032-byte buffer: report ID `0x06` plus 1031 data
+  bytes (`96 07 04` in the descriptor).
+- LED colour planes are 126 bytes each (`imul ..., 0x7e`), one plane per
+  channel, matching `RGBIndex=0,1,2`.
+- Report-6 write headers observed in the disassembly: `04 D8 00 40` (apply
+  profile), `09 00 40` + 1024 bytes of data, and `03 C6` + 136 bytes of config.
+- Report-5 mailbox command: `83 C6` followed by zeros, used before a report-6
+  read.
+- `HidD_SetFeature` / `HidD_GetFeature` are resolved through `Lowerdev.dll`;
+  the wrapper object is at `this+0x2628`, the send helper at `0x4454f0`, the
+  profile write at `0x4459d0` / `0x411150`, and the read helper at `0x445830`.
+
+The 2026-11-01 usbmon capture confirms the 1032-byte buffer, the three
+126-byte planes, the `09 cc` colour header, and the repeated
+`09 cc` → `09 d0` → `03 c6` sequence. The remaining gates are hardware
+verification of the write and calibration of slots `102–125`.
+
+## 8. Transport
+
+### 8.1 Open
 
 ```python
-fd = os.open(node, os.O_RDWR)
+fd = os.open(node, os.O_RDONLY)   # info / dump / check
+fd = os.open(node, os.O_RDWR)     # set (the captured lighting frame)
 ```
 
-The reference project uses `O_RDWR` without `O_NONBLOCK`. The LED ioctl is
-synchronous.
-
-### 6.2 ioctl
+### 8.2 ioctl numbers
 
 ```python
+def hidiocgfeature(length: int) -> int:
+    # _IOC(READ|WRITE, 'H', 0x07, length)
+    return (3 << 30) | (length << 16) | (ord("H") << 8) | 0x07
+
 def hidiocsfeature(length: int) -> int:
     # _IOC(READ|WRITE, 'H', 0x06, length)
     return (3 << 30) | (length << 16) | (ord("H") << 8) | 0x06
-
-fcntl.ioctl(fd, hidiocsfeature(382), packet)
 ```
 
-For 382 bytes this is:
+| Call | Request number |
+|---|---:|
+| `HIDIOCGFEATURE(6)` | `0xC0064807` |
+| `HIDIOCGFEATURE(1032)` | `0xC4084807` |
+| `HIDIOCSFEATURE(1032)` | `0xC4084806` |
 
-```text
-0xC17E4806
-```
+`fcntl.ioctl` mutates a `bytearray` in place for `HIDIOCGFEATURE` and returns
+the number of bytes copied (the full buffer length on success). For
+`HIDIOCSFEATURE` the frame is passed as an immutable `bytes` object; a
+non-negative return means the kernel accepted the transfer.
 
-### 6.3 Buffer rules
-
-- `packet` is exactly 382 bytes.
-- `packet[0]` is the report ID (`0x08`), included in the ioctl length.
-- `packet[1:4]` is the header.
-- `packet[4:]` is 378 bytes of RGB data.
-- Never send a shorter or longer buffer.
-- Never send report `0x06`.
-
-### 6.4 Errors
+### 8.3 Errors
 
 | Error | Likely cause | Action |
 |---|---|---|
 | `ENOENT` | Device not present / wrong node | Re-scan; ask user to replug |
 | `EACCES` / `EPERM` | hidraw is root-only | Install udev rule or run as root |
-| `EINVAL` | ioctl/report rejected | Stop; do not guess other reports |
-| `EPIPE` / `ENODEV` | Device disconnected mid-write | Re-scan; retry once |
+| `EINVAL` | Report not declared / wrong length | Stop; do not guess reports |
+| `EPIPE` | Device stalled the control request | Record it; do not retry blindly |
+| `ETIMEDOUT` | Device did not answer | Replug; retry once |
+| `ENODEV` | Disconnected mid-transfer | Re-scan; retry once |
 | `EBUSY` | Another process owns the device | Report and exit |
 
-## 7. Discovery
-
-Algorithm:
+## 9. Discovery
 
 ```text
 for each /sys/class/hidraw/hidraw*:
@@ -249,23 +315,11 @@ for each /sys/class/hidraw/hidraw*:
         return "/dev/" + basename(hidraw)
 ```
 
-Reference implementation:
-
-```python
-_HID_ID_TOKEN = "HID_ID=0003:0000258A:00000049"
-CONTROL_INTERFACE = "01"
-```
-
-Notes:
-
-- `uevent` is case-sensitive in the file but the reference uppercases it before
-  matching; either is fine if consistent.
-- `bInterfaceNumber` lives on the USB interface parent, not the HID device
-  directory. Walk up up to ~6 levels.
+- `bInterfaceNumber` lives on the USB interface parent; walk up to ~6 levels.
 - If multiple matching devices exist, list them and require `--device`.
-- Do not hardcode `/dev/hidraw6`; it changes on replug.
+- Never hardcode `/dev/hidraw6`; it changes on replug.
 
-## 8. Slot map
+## 10. Slot map
 
 | Range | Contents |
 |---|---|
@@ -278,65 +332,68 @@ Main-key dead slots:
 6, 23, 29, 41, 47, 70, 71, 75, 76, 77, 87, 88, 93, 99, 100
 ```
 
-Full table: [KEYMAP.md](KEYMAP.md).
+Full table: [KEYMAP.md](KEYMAP.md). The usbmon capture confirms the plane order
+inside report `0x06`: red at offset 8, green at 134, blue at 260, each 126
+bytes, with slot 0 first in each plane.
 
-## 9. Safety rules
+## 11. Safety rules
 
-1. **Only report `0x08` is sent.** The controller exposes a single
-   `send_led_frame()` function; there is no generic feature-report API.
-2. **Never send report `0x06`.** It is the 1031-byte vendor feature report and
-   is the most likely firmware/config path.
-3. **No firmware/bootloader/flash commands.** The tool cannot brick the board
-   through a firmware path because it has no such code.
-4. **No driver detach.** hidraw coexists with `usbhid`; typing is unaffected.
-5. **No macro/keymap changes.** The tool only writes LED colors.
-6. **Validate the frame.** Length must be 382, header must be
-   `08 0A 7A 01`, and every color byte must be 0–255.
-7. **Lighting is volatile.** Do not promise persistence unless Phase 0 proves
-   the board stores it.
-8. **Stop on protocol errors.** If `EINVAL` occurs, do not try other report IDs
-   blindly. Investigate first.
+1. **Only declared feature reports `0x05` and `0x06` may be used.** Report
+   `0x08` does not exist; never send it.
+2. **`info`, `dump`, and `check` are read-only.** `dump --report 6` still stalls
+   with `EPIPE`; these commands never write.
+3. **`set` writes exactly one captured frame shape:** report `0x06`, header
+   `06 09 cc 00 40 00 00 00`, three 126-byte colour planes, and the captured
+   tail. `controller.write_feature()` refuses every other header or tail, and
+   there is no generic feature-write API.
+4. **Writes require the captured descriptor hash.** A different descriptor is
+   reported as `UNKNOWN` and refused before the device is opened.
+5. **`--dry-run` prints the complete 1032-byte frame and opens no device.**
+   Nothing is written and the local last-frame record is not changed.
+6. **Never send profile-save, firmware, bootloader, flash, macro, or keymap
+   opcodes.** The captured `04 d8` profile-write packet and the `09 d0`/`03 c6`
+   companion packets are deliberately not sent; hardware verification showed
+   they are not needed for per-key colours.
+7. **No driver detach.** hidraw coexists with `usbhid`; typing is unaffected.
+8. **Stop on unexpected errors.** `EPIPE`/`EINVAL` are findings, not invitations
+   to try other report IDs.
 
-## 10. Verification status
+## 12. Verification status
 
 | Item | Status |
 |---|---|
-| USB IDs, interfaces, descriptors | Confirmed |
-| Main key slots `0–101` | Confirmed from official `Cfg.ini` |
-| 126-slot / 378-byte payload | Confirmed from official driver |
+| USB IDs, interfaces, raw descriptors | Confirmed |
+| IF1 descriptor parse (7 reports, no `0x08`) | Confirmed |
+| Descriptor hash fixture | Confirmed (`32771137…`) |
+| Report `0x05` `GetFeature` | Confirmed: `05 01 02 00 00 00` |
+| Report `0x06` `GetFeature` | Confirmed **stalled** (`EPIPE`) |
+| Official app read handshake (`83 C6` → report 6) | **Captured** (`06 83 c6 …`, 262 B) |
+| Main key slots `0–101` | Confirmed from `Cfg.ini` |
+| 126-slot / 126-byte planes | **Confirmed on hardware** (R `8`, G `134`, B `260`) |
 | RGB order R,G,B | Confirmed from `Cfg.ini` |
-| Report `0x08` + header accepted by K622 | **Pending hardware test** |
+| Report-6 LED write packet | **Captured:** `09 cc` + 13 complete updates |
+| Write implementation (`set`, allowlist, state) | **Implemented; unit-tested** |
+| Hardware write test (`set Esc=red`) | **Confirmed:** Esc red, `1` green, `--off` clears |
+| Additive saved-frame behaviour | **Confirmed on hardware** |
+| `09 d0` / `03 c6` companions | Not required for per-key colours; still not sent |
+| Read-back backup for report 6 | **Blocked by the stalled GET**; local write-ahead record only |
 | Extra slots `102–125` | **Pending calibration** |
-| Persistence | **Unknown** |
-| Built-in effect override | **Unknown** |
+| Persistence / built-in effect override | Unknown |
 
-## 11. Minimal probe sequence
+## 13. Next steps
 
-Phase 0 will run this sequence and record the visual result:
+The capture and hardware-write gates are closed. Remaining work:
 
-1. **All off** — `08 0A 7A 01` + 378 zeros.
-   - Expected: board goes dark.
-   - If not: report may be rejected, or the board is in a hardware effect that
-     overrides per-key data.
-2. **Slot 0 red** — Esc red, all else off.
-3. **Slot 7 green** — `1` key green.
-4. **Slot 101 blue** — Right arrow blue.
-5. **Slot 6 white** — dead slot; nothing should light.
-6. **RGB order** — slot 0 red, then green, then blue.
-7. **Extra slots** — slots `102–125` one at a time; record which key lights up.
+1. Calibrate slots `102–125` (G/MR/media keys) by writing `slot:N=ffffff` and
+   recording which physical key lights.
+2. Decide whether to expose effects/profiles; the current CLI only sets static
+   per-key colours plus `--off`.
+3. Optionally investigate the read handshake for profile/config read-back; the
+   colour buffer itself still cannot be read.
 
-Pass criteria:
+Do not send `09 d0`, `03 c6`, or `04 d8` unless a new, captured need appears.
 
-- The board responds to the frame.
-- Main-key slots match the official map.
-- Typing is unaffected.
-- No disconnect or error.
-
-If the probe fails, do **not** try report `0x06`. Investigate with a USB capture
-of the official Windows software (e.g., in a VM) or further static analysis of
-`KeyboardDrv.exe` / `Lowerdev.dll`.
-
-## 12. References
+## 14. References
 
 - Reference implementation:
   <https://github.com/kn4oqw-clint/redragon-ks82b-rgb>
@@ -344,6 +401,5 @@ of the official Windows software (e.g., in a VM) or further static analysis of
   <https://github.com/kn4oqw-clint/redragon-ks82b-rgb/blob/main/docs/openrgb-4106-report.md>
 - OpenRGB issue #4106:
   <https://gitlab.com/CalcProgrammer1/OpenRGB/-/issues/4106>
-- Linux kernel:
-  `drivers/hid/hidraw.c`, `drivers/hid/hid-core.c`,
+- Linux kernel: `drivers/hid/hidraw.c`, `drivers/hid/hid-core.c`,
   `drivers/hid/usbhid/hid-core.c`

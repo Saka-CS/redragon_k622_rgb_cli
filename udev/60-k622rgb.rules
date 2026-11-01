@@ -1,0 +1,9 @@
+# Redragon K622 RGB (258a:0049): let the active desktop user read and write
+# frames through /dev/hidrawN without root.
+#
+# Install once:
+#   sudo cp udev/60-k622rgb.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --subsystem-match=hidraw
+# Then replug the keyboard.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="258a", ATTRS{idProduct}=="0049", TAG+="uaccess"

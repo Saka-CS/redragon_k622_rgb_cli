@@ -154,6 +154,10 @@ be calibrated.
 The physical board shows **G1–G4 + MR**, not a separate G5. `Cfg.ini`'s `[FN]`
 section lists G1–G5; G5 may be an alias for MR or a sibling-variant entry.
 
+Until calibration, the CLI rejects `G1`/`MR`/`RGB`/… as unknown names. Use the
+numeric escape instead, e.g. `k622rgb set slot:102=ffffff`, and record which
+physical key lights up.
+
 ## Calibration output
 
 `k622rgb calibrate` writes `~/.config/k622rgb/layout.json`:

@@ -4,6 +4,19 @@ Linux CLI for per-key RGB control of the **Redragon K622 Horus TKL RGB**
 keyboard, modeled on
 [redragon-ks82b-rgb](https://github.com/kn4oqw-clint/redragon-ks82b-rgb).
 
+> **Status note (2026-11-01): the original premises are superseded.**
+> The K622's IF1 descriptor declares only feature reports `0x05` (5 B) and
+> `0x06` (1031 B); report `0x08` does not exist. Read-only recon is complete:
+> report `0x05` reads `05 01 02 00 00 00`, while report `0x06` GET stalls with
+> `EPIPE`. A binary usbmon capture of the official app is also complete: the
+> lighting frame is the captured `09 cc` report-6 packet with three 126-byte
+> colour planes. The `set` command implements that frame behind an allowlist,
+> a descriptor-hash check, `--dry-run`, and a local last-frame record. Hardware
+> verification passed: `set Esc=red` lit Esc red, a second `set 1=green` kept
+> both, and `set --off` cleared the board. The `09 d0`/`03 c6` companions are
+> not required. See [PROTOCOL.md](PROTOCOL.md) sections 6.3 and 13.
+> Treat the phase plan below as historical where it mentions report `0x08`.
+
 ## 1. Confirmed scope
 
 - **Core CLI + effects + profiles** — no daemon, GUI, MQTT, or systemd service.
@@ -15,7 +28,7 @@ keyboard, modeled on
 
 ## 2. Non-goals
 
-- No firmware update, bootloader, flash, or report `0x06` support.
+- No firmware update, bootloader, flash, or guessed vendor opcodes.
 - No macro or keymap remapping.
 - No Bluetooth/2.4 GHz or ISO-layout variants.
 - No daemon, GUI, MQTT, plugin system, ambient/system-monitor modes, or
@@ -42,7 +55,7 @@ keyboard_RGB_controller/
 ├── udev/
 │   └── 60-k622rgb.rules
 ├── tests/
-│   ├── test_packet.py
+│   ├── test_descriptor.py
 │   ├── test_layout.py
 │   ├── test_colors.py
 │   ├── test_profiles.py
