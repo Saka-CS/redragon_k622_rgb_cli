@@ -1,9 +1,12 @@
 """Interactive calibration of the K622's extra LED slots (102-125).
 
-The official ``Cfg.ini`` only maps the 87 main keys. The G/MR/media keys live in
-slots ``102-125``, mixed with slots that have no LED on this board. This module
-lights one slot at a time and records the answer in ``layout.json`` so
-``layout.resolve_key()`` can find the extra keys afterwards.
+The official ``Cfg.ini`` only maps the 87 main keys. On the K622 the
+G1-G4/MR/RGB/media keys have **no individually addressable RGB LEDs**; hardware
+testing showed they stay dark in both Fixed_on and Self-define modes, and slots
+``102-125`` are duplicate/dead matrix positions (slot 105 lights LCtrl, slot 6
+lights F5). This module is retained for sibling Sinowealth variants that do
+have extra RGB keys. It lights one slot at a time and records the answer in
+``layout.json`` so ``layout.resolve_key()`` can find the extra keys afterwards.
 
 Calibration writes only the captured lighting frame. It does not touch the
 device's onboard configuration, and it restores the last frame this tool saved

@@ -10,7 +10,7 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 | [FINDINGS.md](FINDINGS.md) | Device identification, official-software analysis, hardware recon evidence, open questions |
 | [PROTOCOL.md](PROTOCOL.md) | USB/HID details, declared reports, verified read/write paths, config mailbox |
 | [RGB_MODES.md](RGB_MODES.md) | All 20 effects, Self-define/OFF, brightness/speed, palette, per-key frames |
-| [KEYMAP.md](KEYMAP.md) | Full 126-slot LED map, dead slots, calibration template |
+| [KEYMAP.md](KEYMAP.md) | Main-key LED map, duplicate/dead slots, extra-key finding |
 | [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | Phased plan, architecture, CLI, testing, acceptance criteria |
 
 ## Status
@@ -24,10 +24,13 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
   **implemented and verified on hardware** (config `03 c6` round trip,
   `08 c8` palette write, `05 83 c6`/`05 88 c8` reads).
 - Official UI: **verified under Wine 11** (mode list, sliders, colour picker).
-- Calibration: **implemented** (`calibrate`, `layout.json`, extra-key aliases);
-  the physical slot map still has to be recorded on the board.
-- Remaining work: run `k622rgb calibrate`, then optionally add game-mode
-  profiles or a daemon.
+- Extra keys: **not RGB**. G1-G4, MR, the RGB toggle and the media buttons
+  stayed dark in both Fixed_on and Self-define modes. `Cfg.ini` has no `[KEY]`
+  entries for them; slots `102-125` are duplicate/dead positions.
+- Calibration: retained for sibling Sinowealth variants; **not needed on the
+  K622**. The RGB set is the 87 main keys.
+- Remaining work: optional game-mode/dynamic effects, a power-cycle test, or a
+  daemon.
 - Commits: hardware gate passed.
 
 ## Short version
@@ -78,35 +81,31 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 ./bin/k622rgb profile load gaming
 ./bin/k622rgb profile list
 ./bin/k622rgb list                                        # calibration status
-./bin/k622rgb calibrate                                   # map slots 102-125
-./bin/k622rgb calibrate --verify                          # re-light mapped slots
+./bin/k622rgb calibrate                                   # sibling variants only (not needed on K622)
+./bin/k622rgb calibrate --verify                          # sibling variants only
 ```
 
-## Calibration
+## Extra keys / calibration
 
-The official software only maps the 87 main keys. The G/MR/media keys live in
-slots `102–125`, mixed with slots that have no LED. Run:
+The K622's G1–G4, MR, RGB toggle, Previous, Play/Pause, Next, Mute and volume
+roller **do not have individually addressable RGB LEDs**. They stayed dark in
+both Fixed_on and Self-define modes while the main keys changed colour, and
+`Cfg.ini` has no `[KEY]` entries for them. The 87 main keys are the entire RGB
+set.
+
+Slots `102–125` and the 15 `Cfg.ini` gaps are duplicate/dead matrix positions,
+not extra RGB keys. Tested examples: slot `105` lights LCtrl, slot `6` lights
+F5. `k622rgb calibrate` is retained for sibling Sinowealth variants but is not
+needed on the K622; leave `~/.config/k622rgb/layout.json` absent.
+
+The numeric `slot:N` escape remains useful for diagnostics:
 
 ```bash
-./bin/k622rgb calibrate
+./bin/k622rgb set slot:6=ffffff         # lights F5 on the K622
+./bin/k622rgb set slot:105=ffffff       # lights LCtrl
 ```
 
-Each slot is lit white in turn. Answer with a key name (`G1`–`G5`, `MR`, `RGB`,
-`Prev`, `Play`, `Next`, `Mute`, `Volume`), a comma-separated list if several
-keys light, `none` for a dead slot, `skip`, `undo`, or `quit`. Any other text is
-accepted and stored as-is, so a slot that lights the wrong key can be noted;
-`list` flags main-key names and unexpected labels. Answers are saved after
-every slot to `~/.config/k622rgb/layout.json` (respecting `XDG_CONFIG_HOME`;
-override with `--layout FILE` or `K622RGB_LAYOUT_FILE`, also accepted by `list`
-and `set`). When calibration ends, the last frame saved by `set` is restored,
-or the board is left off.
-
-Afterwards the extra keys work like any other key:
-
-```bash
-./bin/k622rgb set G1=red MR=blue
-./bin/k622rgb list
-```
+`k622rgb set G1=red`, `MR=blue`, etc. are not meaningful on this board.
 
 ## Profiles
 
@@ -159,7 +158,7 @@ never sends an arbitrary report-5 command.
 | Effect palette | 21 blocks × 7 RGB triples (blocks 1–20 used) |
 | Template sha256 | `5d922916bdeadf7bfc3676a00855b8c0b9e05562e083d344d67dd58c73e4626a` |
 | Main key LED slots | `0–101` (87 keys, 15 dead slots) |
-| Extra LED slots | `102–125` (unknown, calibration required) |
+| Extra LED slots | `102–125` duplicate/dead (not RGB); no extra key LEDs |
 | RGB order | R, G, B |
 | Descriptor sha256 | `32771137a995e90b6fa9d210761c23ce61e60a21accd033b86f484f198a5061c` |
 | Reference project | <https://github.com/kn4oqw-clint/redragon-ks82b-rgb> |

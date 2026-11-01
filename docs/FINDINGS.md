@@ -6,7 +6,8 @@
 - **Host:** Linux, Python 3.14.8, Hyprland/Omarchy desktop
 - **Status:** per-key writes, built-in effects, brightness/speed, effect
   palette and config backup/restore are implemented and verified on the
-  physical K622; only extra-slot calibration remains
+  physical K622. The extra G/MR/media keys are **not RGB**; slots 102-125 are
+  duplicate/dead. Only optional work remains.
 
 ## 1. Objective
 
@@ -387,21 +388,19 @@ The 611×252 layout image shows:
 | Mute | Mute |
 | Volume roller | Wheel; addressability unknown |
 
-These are **not** in `Cfg.ini`'s `[KEY]` section. They likely occupy some of the
-unused slots `102–125`, but the packet may also contain dead slots for other
-variants of the same controller. Interactive calibration is required.
+These are **not** in `Cfg.ini`'s `[KEY]` section, and hardware testing on
+2026-11-01 showed they have **no individually addressable RGB LEDs**: G1–G4,
+MR, the RGB toggle, Previous, Play/Pause, Next and Mute stayed dark in both
+Fixed_on and Self-define modes while the main keys changed colour. The volume
+roller also has no addressable LED. Slots `102–125` are duplicate/dead matrix
+positions (for example slot 105 lights LCtrl, slot 6 lights F5), not the extra
+keys.
 
 ### 5.3 G5 ambiguity
 
 `Cfg.ini`'s `[FN]` section lists G1–G5, but the physical board shows G1–G4 plus
-MR. Possibilities:
-
-- G5 is an alias for MR.
-- G5 exists only on a related variant (K618/K622 family).
-- The MR key reports as G5 in macro mode.
-
-Calibration and user confirmation will resolve this. The CLI can support both
-`G5` and `MR` aliases pointing to the same slot if needed.
+MR. Since these keys are not RGB on the K622, there is no LED slot to resolve.
+G5 remains a sibling-variant/macro alias only.
 
 ### 5.4 Label normalization
 
@@ -489,9 +488,10 @@ on the K622 produced the 5-second `ETIMEDOUT` that motivated this pivot.
 | Effect palette (`05 88 c8` / `08 c8`, 441 B) | **Confirmed** | Hardware write/read round trip |
 | 20 effects + Self-define + OFF | **Confirmed** | Mode sweep on hardware + official UI under Wine 11 |
 | Brightness 0–9 / speed 1–4 | **Confirmed** | Config pair write/read; UI sliders |
-| Direction control | **Not present** | `Cfg.ini` `direct=0` for every mode; UI has no direction control |
+| Direction control | **Not present / not exposed** | Manual: `Fn+←/→` = speed; UI: no direction; bit-3 test produced a static colour, not a reversal |
 | Read-back backup for report 6 | **Confirmed** | `05 89 cc` returns the custom frame; `set --from-device` uses it |
-| Extra keys on slots `102–125` | **Unknown** | Not in `Cfg.ini`; calibration required |
+| Extra keys (G/MR/media) | **Not RGB** | Stayed dark in Fixed_on and Self-define; `Cfg.ini` has no `[KEY]` entries |
+| Slots `102–125` | **Duplicate/dead** | Slot 105 = LCtrl, slot 6 = F5; no extra RGB keys |
 | Lighting persistence across power cycle | **Likely** | Config persists across writes/replugs; explicit power-cycle test still pending |
 | Built-in effect override behavior | **Unknown** | Not tested |
 | Volume roller addressability | **Unknown** | Not a key; may have no LED |
@@ -524,7 +524,7 @@ Implications:
 | USB ID | `258a:0049` | `258a:0049` |
 | Controller | Sinowealth | Sinowealth |
 | Descriptor | Documented, identical to K622 | Identical to reference |
-| Layout | Full-size, 108 LEDs | TKL, 87 main keys + extras |
+| Layout | Full-size, 108 LEDs | TKL, 87 RGB main keys; extra keys not RGB |
 | Packet | 382-byte feature report `0x08` (not valid on K622) | Captured report `0x06` `09 cc`, 1032 B |
 | Language | Pure Python stdlib | Same |
 | CLI | `ks82rgb` | `k622rgb` |
@@ -546,8 +546,8 @@ future work.
    handshake returns the config, not the colour buffer, so a true read-back is
    still unavailable. The CLI stores the frame it last wrote as a local
    write-ahead record instead.
-3. **Extra-key addressability** — Slots `102–125` may contain G/MR/media LEDs,
-   dead slots, or a mix. Calibration is required.
+3. **Extra-key addressability** — Resolved. The K622's G/MR/media keys have no
+   individually addressable RGB LEDs; slots `102–125` are duplicates/dead.
 4. **Built-in effect override** — If the board is in a hardware effect, a
    single per-key frame may be ignored or overridden. The write test will show
    whether a mode-select command is needed.

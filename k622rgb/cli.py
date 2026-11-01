@@ -241,12 +241,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     calibrate_parser = subparsers.add_parser(
         "calibrate",
-        help="interactively map the extra LED slots 102-125",
+        help="map extra LED slots 102-125 (sibling variants; not needed on K622)",
         description=(
             "Light one extra slot at a time and ask which key lit up. Answers "
             "are saved to layout.json after every slot, so quitting keeps "
             "progress. Use --verify to light the slots that are already "
-            "mapped. The last saved frame is restored when calibration ends."
+            "mapped. On the K622 the G1-G4/MR/RGB/media keys have no "
+            "individually addressable RGB LEDs and slots 102-125 are "
+            "duplicate/dead, so this command is only useful for sibling "
+            "Sinowealth variants. The last saved frame is restored when "
+            "calibration ends."
         ),
     )
     _add_global_flags(calibrate_parser, suppress_defaults=True)
@@ -1008,6 +1012,13 @@ def cmd_list(args: argparse.Namespace) -> int:
     print(
         "calibrated: %d of %d extra slots"
         % (calibrated, len(layout.EXTRA_SLOTS))
+    )
+    print(
+        "note: on the K622 the G1-G4/MR/RGB/media keys have no individually "
+        "addressable RGB LEDs;"
+    )
+    print(
+        "      slots 102-125 are duplicate/dead matrix positions, not RGB keys."
     )
 
     if args.all:

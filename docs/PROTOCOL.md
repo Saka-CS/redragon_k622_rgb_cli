@@ -480,7 +480,13 @@ table.
 keyboard. The UI showed exactly the expected option set: 20 named effects,
 Self-define, OFF; brightness slider `0–9`; speed slider `1–4`; an RGB
 (random) checkbox; and a custom colour picker. No direction control was
-present, matching `LedOptN`'s `direct=0` column in `Cfg.ini`.
+present, matching `LedOptN`'s `direct=0` column in `Cfg.ini`. A direct test of
+bit 3 of the per-mode colour byte (the `direction_left` position in the
+sibling Sinowealth K16 layout) did not reverse any effect; on `Rainbow_wheel`
+it changed the effect to a static colour. The K622 therefore does not use
+that bit for direction. The firmware does preserve the whole colour byte
+(including bits 3–7), but the official app only writes `0x00–0x07`; bits 4–7
+remain undocumented and are never written by this tool.
 
 ## 15. References
 

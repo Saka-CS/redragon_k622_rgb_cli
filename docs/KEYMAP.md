@@ -2,10 +2,12 @@
 
 The LED packet contains **126 RGB slots**. This document maps them.
 
-- **Slots `0–101`** — 87 main keys, taken from the official `Cfg.ini`.
-- **Slots `102–125`** — G/MR/media keys and dead slots; discovered by
-  `k622rgb calibrate`.
-- **Dead slots in `0–101`** — 15 slots with no LED.
+- **Slots `0–101`** — 87 main keys, taken from the official `Cfg.ini`; these
+  are the **only RGB LEDs on the K622**.
+- **Slots `102–125`** — duplicate/dead matrix positions on the K622, **not**
+  G/MR/media RGB keys. Verified on hardware.
+- **Dead slots in `0–101`** — 15 Cfg.ini gaps; at least some are aliases of
+  main keys (slot `6` lights F5). They do not hold extra RGB keys.
 
 The official `Cfg.ini` line format is:
 
@@ -129,48 +131,47 @@ separate internal key index (0–121), **not** the LED slot.
 6, 23, 29, 41, 47, 70, 71, 75, 76, 77, 87, 88, 93, 99, 100
 ```
 
-These slots exist in the 126-slot packet but have no LED on the K622. Writing
-any color to them has no visible effect.
+These slots exist in the 126-slot packet but are not main-key positions in
+`Cfg.ini`. They do not hold G/MR/media RGB LEDs. At least one is an alias:
+writing slot `6` white lights **F5**. The others were not exhaustively mapped;
+treat them as duplicate/dead and do not use them for RGB control.
 
-## Extra slots (102–125)
+## Extra keys (G1–G4, MR, RGB, media)
 
-These slots are **not** described by `Cfg.ini`'s `[KEY]` section. They may hold
-the G/MR/media LEDs, may be dead, or may belong to a sibling variant. Each must
-be calibrated.
+**Verified on the K622 on 2026-11-01: the extra keys have no individually
+addressable RGB LEDs.**
 
-| Candidate key | CLI alias | Likely slots | Status |
-|---|---|---|---|
-| G1 | `G1` | `102–125` | Unknown |
-| G2 | `G2` | `102–125` | Unknown |
-| G3 | `G3` | `102–125` | Unknown |
-| G4 | `G4` | `102–125` | Unknown |
-| MR | `MR` | `102–125` | Unknown |
-| RGB toggle | `RGB` | `102–125` | Unknown |
-| Previous track | `Prev` | `102–125` | Unknown |
-| Play/Pause | `Play` | `102–125` | Unknown |
-| Next track | `Next` | `102–125` | Unknown |
-| Mute | `Mute` | `102–125` | Unknown |
-| Volume roller | `Volume` | `102–125` | Unknown; may have no LED |
+The physical board has G1–G4, MR, an RGB toggle, Previous, Play/Pause, Next,
+Mute and a volume roller. While the 87 main keys were set to Fixed_on red and
+then blue, and again while in Self-define/per-key mode, **G1–G4, MR and all
+five media buttons stayed dark**. MR is not a fixed red indicator either.
 
-The physical board shows **G1–G4 + MR**, not a separate G5. `Cfg.ini`'s `[FN]`
-section lists G1–G5; G5 may be an alias for MR or a sibling-variant entry.
+`Cfg.ini` has **no `[KEY]` entries** for these keys. They are key-assignment
+and macro controls, not RGB keys. The `text.xml` media strings and the
+`keyimg.png` artwork belong to the key-assignment UI.
 
-Run `k622rgb calibrate` to map these slots. It lights one slot at a time and
-accepts a key name (`G1`–`G5`, `MR`, `RGB`, `Prev`, `Play`, `Next`, `Mute`,
-`Volume`), a comma-separated list when one slot lights several keys, `none` for
-a dead slot, `skip` to leave a slot uncalibrated, `undo` to go back, or `quit`
-to stop. Any other text is stored as-is, so a mistaken key can be reported;
-`k622rgb list` flags main-key names (`Esc (main key!)`) and unknown labels
-(`Bogus (unexpected)`). Progress is saved after every answer. Use
-`k622rgb calibrate --verify` to light the mapped slots again.
+Slots `102–125` are duplicate/dead matrix positions, not the extra keys:
 
-Until a slot is calibrated, the CLI rejects `G1`/`MR`/`RGB`/… with an
-actionable message. The numeric escape always works:
-`k622rgb set slot:102=ffffff`.
+- slot `105` lights **LCtrl** (the old calibration was not random);
+- slot `6` lights **F5**;
+- the rest are dead or further aliases.
 
-## Calibration output
+Consequences:
 
-`k622rgb calibrate` writes `~/.config/k622rgb/layout.json`:
+- The K622 RGB set is the **87 main keys only**.
+- `k622rgb calibrate` is retained for sibling Sinowealth variants, but it is
+  **not needed for K622 RGB**. Leave `~/.config/k622rgb/layout.json` absent.
+- Running it on the K622 will record duplicate main-key names or dead slots,
+  which `list` then flags as `(main key!)`.
+- `k622rgb set G1=...`, `MR=...`, `RGB=...`, `Prev=...`, `Play=...`,
+  `Next=...`, `Mute=...` and `Volume=...` are not meaningful on this board.
+  The numeric `slot:N` escape remains available for diagnostics only.
+
+## Calibration output (sibling variants)
+
+`k622rgb calibrate` writes `~/.config/k622rgb/layout.json` for Sinowealth
+variants that do have extra RGB keys. On the K622, leave the file absent: there
+are no extra RGB slots to map. The schema is:
 
 ```json
 {
@@ -178,15 +179,7 @@ actionable message. The numeric escape always works:
   "slots": {
     "102": "G1",
     "103": "G2",
-    "104": "G3",
-    "105": "G4",
-    "106": "MR",
-    "107": "RGB",
-    "108": "Prev",
-    "109": "Play",
-    "110": "Next",
-    "111": "Mute",
-    "112": ""
+    "104": "MR"
   }
 }
 ```
@@ -195,8 +188,9 @@ Rules:
 
 - `""` means “calibrated as dead”.
 - A missing slot means “not yet calibrated”.
-- Slots not present in the file are treated as dead/unknown.
 - The file is optional; without it, only slots `0–101` are addressable.
+- The file's slot range is `102–125`; on the K622 those are duplicate/dead
+  positions, not RGB extras.
 
 ## Aliases
 
@@ -227,7 +221,7 @@ Key lookup is case-insensitive. The following aliases are accepted:
 | `-` | `Minus`, `Hyphen` |
 | `=` | `Equals` |
 | `Up` / `Down` / `Left` / `Right` | `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight` |
-| `G1`–`G4`, `MR`, `RGB`, `Prev`, `Play`, `Next`, `Mute`, `Volume` | Calibration-dependent |
+| `G1`–`G4`, `MR`, `RGB`, `Prev`, `Play`, `Next`, `Mute`, `Volume` | Sibling-variant calibration only; not RGB keys on the K622 |
 
 ## Machine-readable map
 

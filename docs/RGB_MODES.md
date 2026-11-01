@@ -17,8 +17,25 @@ The official lighting tab exposes exactly these RGB options:
 | Colour | custom RGB | written to palette entry 0 for the selected mode |
 | Light | on/off | UI master switch; **OFF** is also a mode |
 
+The RGB set is the **87 main keys only**. The G1–G4, MR, RGB toggle,
+Previous, Play/Pause, Next, Mute and volume roller do **not** have
+individually addressable RGB LEDs; they stayed dark in both Fixed_on and
+Self-define modes. See [KEYMAP.md](KEYMAP.md).
+
 There is **no direction control** on the K622. The official `Cfg.ini` has a
 `direct` column in every `LedOptN` row, and it is `0` for all 22 entries.
+
+This was also tested directly on hardware (2026-11-01): setting bit 3 of the
+per-mode colour byte (the `direction_left` bit in the sibling Sinowealth K16
+layout) does **not** reverse an effect. On `Rainbow_wheel` it changes the
+effect to a static colour; on `Fixed_on` it selects a different fixed colour.
+The K16 direction-bit hypothesis is therefore rejected for the K622. The
+official K622 manual documents `Fn+←/→` as speed, not direction.
+
+The firmware preserves the full 8-bit colour field (bits 3–7 included) when it
+is written, but the official app only writes `0x00–0x07`. Bit 3 is not
+direction; bits 4–7 remain undocumented, are never set by `k622rgb`, and were
+not visually mapped. Do not treat them as a direction control.
 
 The official software does not expose a per-key brightness slider: per-key
 colours are sent as raw RGB values.
@@ -226,8 +243,12 @@ k622rgb profile delete gaming
 
 ## 9. Unknown / out of scope
 
-- **Direction** is not exposed by the K622 `Cfg.ini` (`direct=0` for every
-  mode) and is not implemented.
+- **Direction** is not exposed by the K622 (`direct=0` for every mode, the
+  manual maps `Fn+←/→` to speed, and a direct bit-3 test produced a static
+  colour instead of a reversal). It is not implemented.
+- Colour-byte values `8–15` are accepted by the firmware but not exposed by
+  the official app; in testing they produced static colours, not direction.
+  The CLI only exposes `0–6` plus random (`7`).
 - The `GaoshouKey1..5` / `GameGpMask` entries in `Cfg.ini` describe key groups
   used by other keyboard features, not the lighting UI. They are not exposed
   by `k622rgb`.

@@ -17,10 +17,14 @@ keyboard, modeled on
 > not required. See [PROTOCOL.md](PROTOCOL.md) sections 6.3 and 13.
 > Treat the phase plan below as historical where it mentions report `0x08`.
 >
-> **Phase 2 status (2026-11-01): implemented.** `k622rgb calibrate`,
-> `k622rgb list`, `layout.json` loading/merging, and the G/MR/media aliases
-> exist and are unit-tested; the physical slot answers still have to be
-> recorded on the board with `k622rgb calibrate`.
+> **Phase 2 status (2026-11-01): implemented, but not applicable to the K622.**
+> `k622rgb calibrate`, `k622rgb list`, `layout.json` loading/merging, and the
+> G/MR/media aliases exist and are unit-tested. Hardware calibration then
+> showed that the K622's G1–G4/MR/RGB/media keys have no individually
+> addressable RGB LEDs; slots `102–125` and the 15 `Cfg.ini` gaps are
+> duplicate/dead matrix positions (slot 105 = LCtrl, slot 6 = F5). The
+> calibrate command remains for sibling Sinowealth variants; on the K622 the
+> RGB set is the 87 main keys only.
 >
 > **Phase 3 status (2026-11-01): implemented.** The built-in effects are driven
 > by the keyboard itself, not host-side animation: `mode`, `color`, `config`
@@ -33,7 +37,7 @@ keyboard, modeled on
 ## 1. Confirmed scope
 
 - **Core CLI + effects + profiles** — no daemon, GUI, MQTT, or systemd service.
-- **Interactive calibration** for the G/MR/media LED slots.
+- **Interactive calibration** for sibling Sinowealth variants. On the K622, hardware testing showed the G/MR/media keys are not RGB; the 87 main keys are the RGB set.
 - **Pure Python standard library** + `bin/k622rgb` launcher — no pip, venv, or
   third-party runtime modules.
 - **Wired USB, US QWERTY K622 only.**
@@ -577,7 +581,7 @@ python3 -m unittest discover -s tests -v
 
 - Fresh clone + udev rule + `./bin/k622rgb set red` works from the README alone.
 - All 87 main keys are individually addressable.
-- Calibration resolves the extra keys that actually have LEDs.
+- On the K622, the 87 main keys are the RGB set; the G/MR/media keys have no addressable RGB LEDs.
 - Effects run at 30 FPS without disturbing typing.
 - `doctor` gives a clear fix for every common failure.
 - No code path can send report `0x06` or any firmware command.
