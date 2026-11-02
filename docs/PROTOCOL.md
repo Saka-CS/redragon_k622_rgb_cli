@@ -432,7 +432,8 @@ The capture and hardware-write gates are closed. Remaining work:
    is an RGB feature on this model; it is not exposed by the lighting tab.~~
    **Resolved:** it is a per-key RGB feature exposed by the app's
    key-assignment **Color Group → Define1..5** menu, not the Lighting tab. It
-   reuses the `09 cc` per-key frame and needs no new opcode. See
+   reuses the `09 cc` per-key frame and needs no new opcode. Implemented by
+   `k622rgb group` and `set --group NAME=COLOR`; see
    [FINDINGS.md](FINDINGS.md) §12.
 2. Optional: daemon/IPC or reactive key effects (out of the current scope).
 

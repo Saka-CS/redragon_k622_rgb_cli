@@ -13,6 +13,8 @@ the exact report shapes captured from the official software.
 Everything below is implemented and was verified on the physical keyboard:
 
 - Per-key colours through the captured report-0x06 `09 cc` frame.
+- Named colour groups, including the vendor `Define1..5` groups imported from
+  `Cfg.ini`, shipped presets and `set --group` overlays.
 - All 20 built-in effects, Self-define and OFF through the `03 c6` config
   mailbox, including brightness `0–9`, speed `1–4`, palette colour and random.
 - The 21 × 7-colour effect palette through `08 c8`.
@@ -92,6 +94,51 @@ to read the custom frame back from the keyboard.
 `set` switches the keyboard to **Self-define** mode by default, because
 per-key frames are ignored while an effect is active. Use `--no-activate` to
 leave the current effect running.
+
+## Colour groups
+
+The official app's **Color Group → Define1..5** feature is a per-key colour
+layer. `k622rgb group` stores the same idea locally and paints it through the
+normal `09 cc` frame; no new protocol is used.
+
+```bash
+./bin/k622rgb group list
+./bin/k622rgb group import Cfg.ini       # read-only; no device access
+./bin/k622rgb group set 1=red 2=green 3=blue 4=yellow 5=cyan
+./bin/k622rgb group apply                # paint define1..5 + Self-define
+```
+
+The five vendor groups are also seeded from the documented K622 defaults, so
+`group list` works before an import. `group import` reads `GaoshouKey1..5` and
+maps the Windows VK codes using the labels and `[KEY]` table in the same file.
+It never modifies `Cfg.ini` and never opens the keyboard.
+
+`group set` can recolour an existing group, define a custom group from a key
+list, or update several groups at once:
+
+```bash
+./bin/k622rgb group set fps=ff0000
+./bin/k622rgb group set mygroup=00ff00 W A S D Up Down Left Right
+./bin/k622rgb group set 1=red 2=green
+```
+
+Shipped presets: `wasd`, `arrows`, `fps`, `moba`, `mmo` and `typing`. Groups
+are stored in `~/.config/k622rgb/groups.json` (respecting `XDG_CONFIG_HOME`;
+override with `--file` or `K622RGB_GROUP_FILE`).
+
+Groups are also reusable overlays in `set`:
+
+```bash
+./bin/k622rgb set --group fps=ff0000 --group arrows=00ff00 Esc=ffffff
+./bin/k622rgb set --all 0000ff --group moba=00ff00 Q=ffffff
+```
+
+Precedence is: `--all`/`--off`/saved/device base, then `--group` layers in
+command-line order (later wins), then explicit `KEY=COLOR` assignments.
+`group apply` starts from the same saved frame and saves the final frame to the
+same state file as `set`. Groups without a colour are skipped with a warning.
+With no names it applies `define1..define5`; later groups win on overlapping
+keys, and optional names are applied in the order given.
 
 ## Built-in effects
 

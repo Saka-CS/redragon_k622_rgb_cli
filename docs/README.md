@@ -20,6 +20,9 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 - Lighting-write capture: **complete** (13 full `09 cc` → `09 d0` → `03 c6`
   updates in a binary usbmon capture).
 - Per-key writes: **implemented and verified on hardware**.
+- Colour groups: **implemented locally** (vendor `Define1..5` import, presets,
+  `group apply`, and `set --group` overlays); they reuse the verified `09 cc`
+  frame and need no new protocol.
 - Built-in effects, brightness/speed, effect palette and Self-define/OFF:
   **implemented and verified on hardware** (config `03 c6` round trip,
   `08 c8` palette write, `05 83 c6`/`05 88 c8` reads).
@@ -32,7 +35,7 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
   zones (`LogoLeft`, `LogoCenter`, `LogoRight`). There are no aliases and 36
   dead slots. The corrected bottom row puts `Z` at 86, `X` at 87, `C` at 88,
   and `/` at 95.
-- Remaining work: optional game-mode/dynamic effects, or a daemon.
+- Remaining work: dynamic/reactive effects, a daemon, or a GUI.
 - Commits: hardware gate passed.
 
 ## Short version
@@ -82,6 +85,11 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 ./bin/k622rgb profile save gaming                         # local lighting profile
 ./bin/k622rgb profile load gaming
 ./bin/k622rgb profile list
+./bin/k622rgb group list                                  # vendor groups + presets
+./bin/k622rgb group import Cfg.ini                        # read-only local import
+./bin/k622rgb group set 1=red 2=green 3=blue 4=yellow 5=cyan
+./bin/k622rgb group apply                                 # paint + Self-define
+./bin/k622rgb set --group fps=ff0000 Esc=ffffff           # group overlay
 ./bin/k622rgb list                                        # main-key LED map
 ```
 
@@ -138,6 +146,12 @@ profiles; the keyboard's keymap/macro table is never written.
 ./bin/k622rgb profile list
 ./bin/k622rgb profile delete gaming
 ```
+
+Colour groups mirror the official **Color Group → Define1..5** feature.
+`group import Cfg.ini` reads `GaoshouKey1..5` and the `[KEY]` VK labels without
+touching the device; `group set` stores colours and optional custom key lists;
+`group apply` and `set --group NAME=COLOR` paint them through the normal
+per-key frame. The group store is `~/.config/k622rgb/groups.json`.
 
 `info`, `dump`, `check`, and `list` are read-only. `set` sends the captured
 `09 cc` report-6 frame and switches to Self-define mode by default (use

@@ -8,4 +8,4 @@ config, ``08 c8`` palette). There is no firmware, bootloader, macro, keymap or
 profile-table write path.
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

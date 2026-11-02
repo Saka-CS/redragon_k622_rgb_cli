@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from k622rgb import cli, controller, layout
+from k622rgb import cli, controller, groups, layout
 
 FIXTURE = Path(__file__).parent / "data" / "k622-if1-descriptor.bin"
 
@@ -87,6 +87,7 @@ class CliTests(unittest.TestCase):
                     os.environ,
                     {
                         "XDG_STATE_HOME": str(self.root / "state"),
+                        "XDG_CONFIG_HOME": str(self.root / "config"),
                     },
                 )
             )
@@ -496,6 +497,69 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertFalse(Path(state_path).exists())
+
+    def test_set_group_overlay_precedence_in_frame(self):
+        group_file = self.root / "config" / "k622rgb" / "groups.json"
+        local = {}
+        groups.update_local_group(local, "fps", (255, 0, 0))
+        groups.save_local_groups(local, str(group_file))
+
+        code, _out, _err, _opener, _reader, writer = self.run_cli(
+            [
+                "set", "--no-activate", "--no-state",
+                "--all", "blue",
+                "--group", "fps=ff0000",
+                "Esc=white",
+            ]
+        )
+        self.assertEqual(code, 0)
+        _fd, packet = writer.call_args.args
+        # FPS paints W red; the --all blue base survives elsewhere.
+        self.assertEqual(packet[8 + 44], 255)     # W red
+        self.assertEqual(packet[134 + 44], 0)
+        self.assertEqual(packet[260 + 44], 0)
+        # Explicit Esc=white wins over the group/base.
+        self.assertEqual(packet[8], 255)
+        self.assertEqual(packet[134], 255)
+        self.assertEqual(packet[260], 255)
+        # F1 is not in the FPS group, so it keeps the blue base.
+        self.assertEqual(packet[260 + 2], 255)
+        self.assertEqual(packet[8 + 2], 0)
+
+    def test_plain_set_ignores_corrupt_group_store(self):
+        group_file = self.root / "config" / "k622rgb" / "groups.json"
+        group_file.parent.mkdir(parents=True)
+        group_file.write_text("{not json", encoding="utf-8")
+        code, out, _err, _opener, _reader, _writer = self.run_cli(
+            ["set", "--dry-run", "--no-state", "Esc=red"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("set: Esc (slot 0) = #ff0000", out)
+
+    def test_group_apply_writes_frame_and_saves_state(self):
+        group_file = str(self.root / "groups.json")
+        state_path = str(self.root / "group-frame.bin")
+        local = {}
+        groups.update_local_group(local, "define1", (255, 0, 0))
+        groups.save_local_groups(local, group_file)
+
+        code, out, _err, opener, _reader, writer = self.run_cli(
+            [
+                "group", "apply", "1",
+                "--file", group_file,
+                "--no-activate",
+                "--state", state_path,
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("group: define1 = #ff0000", out)
+        self.assertIn("saved frame to", out)
+        opener.assert_called_once_with(self.node, writable=True)
+        writer.assert_called_once()
+        _fd, packet = writer.call_args.args
+        self.assertEqual(packet[8], 255)      # Esc
+        self.assertEqual(packet[134], 0)
+        self.assertEqual(Path(state_path).read_bytes(), packet)
 
     # -- list ------------------------------------------------------------
 

@@ -13,6 +13,7 @@ Lighting commands:
   brightness (0-9), speed (1-4), random or a specific colour.
 * ``color``   — inspect or edit the seven-colour palette of an effect.
 * ``set``     — build the captured report-0x06 ``09 cc`` per-key frame.
+* ``group``   — manage named per-key colour groups and overlays.
 * ``off``     — select the built-in OFF mode.
 * ``config``  — dump/show/restore the config, palette and custom frames.
 * ``profile`` — save/load/list/delete local lighting profiles.
@@ -29,7 +30,7 @@ import sys
 import time
 from typing import Dict, List, Optional, Tuple
 
-from . import __version__, colors, controller, layout, profiles, state
+from . import __version__, colors, controller, groups, layout, profiles, state
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -70,6 +71,65 @@ def _add_global_flags(parser: argparse.ArgumentParser, suppress_defaults: bool =
         action="store_true",
         default=flag_default,
         help="print discovery details",
+    )
+
+
+def _add_frame_flags(parser: argparse.ArgumentParser) -> None:
+    """Register the frame-building flags shared by ``set`` and ``group apply``."""
+    parser.add_argument(
+        "--all",
+        dest="fill",
+        metavar="COLOR",
+        help="fill all 126 slots before applying group/key overrides",
+    )
+    parser.add_argument(
+        "--off",
+        action="store_true",
+        help="start from all black before applying group/key overrides",
+    )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="ignore the saved last frame and start from the captured all-off frame",
+    )
+    parser.add_argument(
+        "--state",
+        metavar="FILE",
+        help="use FILE for the saved last frame (default: XDG state directory)",
+    )
+    parser.add_argument(
+        "--no-state",
+        action="store_true",
+        help="do not read or write the saved last frame",
+    )
+    parser.add_argument(
+        "--hex",
+        action="store_true",
+        help="print the full 1032-byte frame even when writing",
+    )
+    parser.add_argument(
+        "--from-device",
+        action="store_true",
+        help="start from the custom frame read back from the keyboard (09 cc)",
+    )
+    parser.add_argument(
+        "--activate",
+        dest="activate",
+        action="store_true",
+        default=True,
+        help="switch to Self-define mode after writing the frame (default)",
+    )
+    parser.add_argument(
+        "--no-activate",
+        dest="activate",
+        action="store_false",
+        help="leave the current lighting mode unchanged",
+    )
+    parser.add_argument(
+        "--brightness",
+        type=int,
+        metavar="0-9",
+        help="software-scale the final frame to brightness level 0-9",
     )
 
 
@@ -154,8 +214,10 @@ def build_parser() -> argparse.ArgumentParser:
             "stay black on the first run. The keyboard is switched to "
             "Self-define mode by default, because per-key frames are ignored "
             "in an effect mode; use --no-activate to leave the current mode. "
-            "The descriptor must match the captured K622 IF1 hash. Use "
-            "--dry-run to print the exact frame without opening the device."
+            "Repeat --group NAME=COLOR to paint stored groups before explicit "
+            "KEY=COLOR overrides. The descriptor must match the captured K622 "
+            "IF1 hash. Use --dry-run to print the exact frame without opening "
+            "the device."
         ),
     )
     _add_global_flags(set_parser, suppress_defaults=True)
@@ -165,60 +227,14 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="KEY=COLOR",
         help="key assignment, e.g. Esc=ff0000 1=#00ff00 slot:6=ffffff",
     )
+    _add_frame_flags(set_parser)
     set_parser.add_argument(
-        "--all",
-        dest="fill",
-        metavar="COLOR",
-        help="fill all 126 slots before applying KEY=COLOR overrides",
-    )
-    set_parser.add_argument(
-        "--off",
-        action="store_true",
-        help="start from all black before applying KEY=COLOR overrides",
-    )
-    set_parser.add_argument(
-        "--reset",
-        action="store_true",
-        help="ignore the saved last frame and start from the captured all-off frame",
-    )
-    set_parser.add_argument(
-        "--state",
-        metavar="FILE",
-        help="use FILE for the saved last frame (default: XDG state directory)",
-    )
-    set_parser.add_argument(
-        "--no-state",
-        action="store_true",
-        help="do not read or write the saved last frame",
-    )
-    set_parser.add_argument(
-        "--hex",
-        action="store_true",
-        help="print the full 1032-byte frame even when writing",
-    )
-    set_parser.add_argument(
-        "--from-device",
-        action="store_true",
-        help="start from the custom frame read back from the keyboard (09 cc)",
-    )
-    set_parser.add_argument(
-        "--activate",
-        dest="activate",
-        action="store_true",
-        default=True,
-        help="switch to Self-define mode after writing the frame (default)",
-    )
-    set_parser.add_argument(
-        "--no-activate",
-        dest="activate",
-        action="store_false",
-        help="leave the current lighting mode unchanged",
-    )
-    set_parser.add_argument(
-        "--brightness",
-        type=int,
-        metavar="0-9",
-        help="software-scale the final frame to brightness level 0-9",
+        "--group",
+        dest="group_overlays",
+        action="append",
+        default=[],
+        metavar="NAME=COLOR",
+        help="paint a stored group before applying KEY=COLOR overrides",
     )
     set_parser.set_defaults(func=cmd_set)
 
@@ -238,6 +254,73 @@ def build_parser() -> argparse.ArgumentParser:
         help="print every packet slot, including dead and alias positions",
     )
     list_parser.set_defaults(func=cmd_list)
+
+    group_parser = subparsers.add_parser(
+        "group",
+        help="manage named per-key colour groups",
+        description=(
+            "The official software's Color Group -> Define1..5 feature paints "
+            "lists of keys from a 09 cc per-key frame. This command stores "
+            "those groups locally, imports the vendor defaults from Cfg.ini, "
+            "and paints them. It never writes a keymap or macro table."
+        ),
+    )
+    group_sub = group_parser.add_subparsers(
+        dest="group_command", metavar="SUBCOMMAND", required=True
+    )
+
+    group_list = group_sub.add_parser(
+        "list", help="show the five vendor groups, presets and local groups"
+    )
+    _add_global_flags(group_list, suppress_defaults=True)
+    group_list.add_argument(
+        "--file", metavar="FILE", help="group store override"
+    )
+    group_list.set_defaults(func=cmd_group_list)
+
+    group_set = group_sub.add_parser(
+        "set", help="recolour or define a group"
+    )
+    _add_global_flags(group_set, suppress_defaults=True)
+    group_set.add_argument(
+        "items",
+        nargs="+",
+        metavar="NAME=COLOR|KEY",
+        help=(
+            "NAME=COLOR to recolour an existing group, optionally followed by "
+            "keys to define/replace them; several NAME=COLOR pairs are allowed"
+        ),
+    )
+    group_set.add_argument(
+        "--file", metavar="FILE", help="group store override"
+    )
+    group_set.set_defaults(func=cmd_group_set)
+
+    group_apply = group_sub.add_parser(
+        "apply", help="paint stored groups into the per-key frame"
+    )
+    _add_global_flags(group_apply, suppress_defaults=True)
+    group_apply.add_argument(
+        "names",
+        nargs="*",
+        metavar="NAME",
+        help="groups to apply in order (default: define1..define5)",
+    )
+    group_apply.add_argument(
+        "--file", metavar="FILE", help="group store override"
+    )
+    _add_frame_flags(group_apply)
+    group_apply.set_defaults(func=cmd_group_apply)
+
+    group_import = group_sub.add_parser(
+        "import", help="import GaoshouKey1..5 from a vendor Cfg.ini"
+    )
+    _add_global_flags(group_import, suppress_defaults=True)
+    group_import.add_argument("path", metavar="Cfg.ini", help="vendor Cfg.ini")
+    group_import.add_argument(
+        "--file", metavar="FILE", help="group store override"
+    )
+    group_import.set_defaults(func=cmd_group_import)
 
     mode_parser = subparsers.add_parser(
         "mode",
@@ -775,17 +858,31 @@ def _read_device_custom_colors(args: argparse.Namespace):
 
 
 def cmd_set(args: argparse.Namespace) -> int:
+    changes = _parse_assignments(args.assignments)
+    group_layers = (
+        groups.resolve_group_layers(args.group_overlays)
+        if args.group_overlays
+        else []
+    )
+    return _run_set(args, changes, group_layers)
+
+
+def _run_set(
+    args: argparse.Namespace,
+    changes: Dict[int, controller.Color],
+    group_layers: List[Tuple[str, controller.Color, List[int]]],
+) -> int:
+    """Build, print and (unless dry-run) write one per-key lighting frame."""
     if args.fill is not None and args.off:
         raise ValueError("--all and --off are mutually exclusive")
     if args.no_state and args.state:
         raise ValueError("--state and --no-state are mutually exclusive")
     if args.brightness is not None and not 0 <= args.brightness <= 9:
         raise ValueError("--brightness must be 0..9")
-
-    changes = _parse_assignments(args.assignments)
-    if not (changes or args.fill is not None or args.off):
+    if not (changes or group_layers or args.fill is not None or args.off):
         raise ValueError(
-            "nothing to set: give KEY=COLOR, --all COLOR, or --off"
+            "nothing to set: give KEY=COLOR, --group NAME=COLOR, "
+            "--all COLOR, or --off"
         )
 
     state_path = None if args.no_state else _state_path(args)
@@ -829,7 +926,13 @@ def cmd_set(args: argparse.Namespace) -> int:
         }
         base_label = "filled with %s" % colors.format_color(fill)
 
+    # Groups form a reusable layer. Later --group arguments win over earlier
+    # ones on overlapping keys; explicit KEY=COLOR assignments win over both.
+    for name, color, slots in group_layers:
+        for slot in slots:
+            base_colors[slot] = color
     base_colors.update(changes)
+
     render_colors = base_colors
     if args.brightness is not None:
         render_colors = _scale_colors(base_colors, args.brightness)
@@ -841,6 +944,12 @@ def cmd_set(args: argparse.Namespace) -> int:
              controller.COLOR_PACKET_HEADER.hex(" "),
              len(packet)))
     print("base: %s" % base_label)
+    for name, color, slots in group_layers:
+        print(
+            "group: %s = %s (%d slot%s)"
+            % (name, colors.format_color(color), len(slots),
+               "" if len(slots) == 1 else "s")
+        )
     for slot in sorted(changes):
         name = layout.canonical_name(slot)
         print(
@@ -978,6 +1087,135 @@ def cmd_set(args: argparse.Namespace) -> int:
         except state.StateError as exc:
             print("warning: %s" % exc, file=sys.stderr)
     return EXIT_ERROR if activation_failed else EXIT_OK
+
+
+def _group_summary(name: str, group: Dict) -> str:
+    color = (
+        "unset"
+        if group.get("color") is None
+        else colors.format_color(group["color"])
+    )
+    keys = ", ".join(group["keys"]) or "(no keys)"
+    return "  %-10s %-10s %s" % (name, color, keys)
+
+
+def _print_group(name: str, group: Dict, local: bool = False) -> None:
+    suffix = "  (local)" if local else ""
+    print(_group_summary(name, group) + suffix)
+
+
+def cmd_group_list(args: argparse.Namespace) -> int:
+    path = groups.group_path(args.file)
+    local = groups.load_local_groups(args.file)
+    effective = groups.effective_groups(local)
+
+    print("group file: %s" % path)
+    print()
+    print("vendor groups:")
+    for name in groups.VENDOR_GROUP_NAMES:
+        _print_group(name, effective[name], name in local)
+    print()
+    print("presets:")
+    for name in groups.PRESET_GROUP_NAMES:
+        _print_group(name, effective[name], name in local)
+    print()
+    print("local groups:")
+    custom = [
+        name for name in local
+        if name not in groups.BUILTIN_GROUP_NAMES
+    ]
+    if not custom:
+        print("  (none)")
+    else:
+        for name in custom:
+            _print_group(name, effective[name], True)
+    return EXIT_OK
+
+
+def cmd_group_set(args: argparse.Namespace) -> int:
+    assignments, keys = groups.parse_set_items(args.items)
+    local = groups.load_local_groups(args.file)
+    results = []
+    for name, color in assignments:
+        group = groups.update_local_group(local, name, color, keys)
+        results.append((name, group))
+
+    if args.dry_run:
+        print("dry run: would update %d group%s"
+              % (len(results), "" if len(results) == 1 else "s"))
+        for name, group in results:
+            print(_group_summary(name, group))
+        print("dry run: group file not written")
+        return EXIT_OK
+
+    path = groups.save_local_groups(local, args.file)
+    for name, group in results:
+        print(_group_summary(name, group).lstrip())
+    print("saved groups to %s" % path)
+    return EXIT_OK
+
+
+def cmd_group_apply(args: argparse.Namespace) -> int:
+    local = groups.load_local_groups(args.file)
+    effective = groups.effective_groups(local)
+    names = args.names or list(groups.VENDOR_GROUP_NAMES)
+    layers = []
+    for raw_name in names:
+        name = groups.canonical_group_name(raw_name)
+        group = effective.get(name)
+        if group is None:
+            raise ValueError(
+                "unknown group %r; available groups: %s"
+                % (name, ", ".join(sorted(effective)))
+            )
+        if group["color"] is None:
+            print(
+                "warning: group %s has no colour; skipping (use "
+                "`group set %s=COLOR`)" % (name, name),
+                file=sys.stderr,
+            )
+            continue
+        slots = []
+        for key in group["keys"]:
+            slot = layout.resolve_key(key)
+            if slot not in slots:
+                slots.append(slot)
+        layers.append((name, group["color"], slots))
+
+    if not layers:
+        raise ValueError(
+            "no group colours configured; run `k622rgb group set "
+            "NAME=COLOR` first"
+        )
+    return _run_set(args, {}, layers)
+
+
+def cmd_group_import(args: argparse.Namespace) -> int:
+    local = groups.load_local_groups(args.file)
+    existing = groups.effective_groups(local)
+    imported, warnings = groups.import_cfg_ini(args.path, existing)
+    for warning in warnings:
+        print("warning: %s" % warning, file=sys.stderr)
+
+    for name, group in imported.items():
+        local[name] = group
+
+    if args.dry_run:
+        print("dry run: parsed %d group%s from %s"
+              % (len(imported), "" if len(imported) == 1 else "s", args.path))
+        for name in groups.VENDOR_GROUP_NAMES:
+            if name in imported:
+                print(_group_summary(name, imported[name]))
+        print("dry run: group file not written")
+        return EXIT_OK
+
+    path = groups.save_local_groups(local, args.file)
+    print("imported: %s" % os.path.expanduser(args.path))
+    print("group file: %s" % path)
+    for name in groups.VENDOR_GROUP_NAMES:
+        if name in imported:
+            print(_group_summary(name, imported[name]))
+    return EXIT_OK
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -1803,6 +2041,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("k622rgb: %s" % exc, file=sys.stderr)
         return EXIT_ERROR
     except state.StateError as exc:
+        print("k622rgb: %s" % exc, file=sys.stderr)
+        return EXIT_ERROR
+    except groups.GroupError as exc:
         print("k622rgb: %s" % exc, file=sys.stderr)
         return EXIT_ERROR
     except profiles.ProfileError as exc:

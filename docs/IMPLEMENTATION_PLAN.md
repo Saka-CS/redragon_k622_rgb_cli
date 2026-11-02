@@ -224,7 +224,8 @@ def write_feature(fd: int, packet) -> int:
 | `k622rgb dump --report {5,6}` | Read a declared feature report (read-only) |
 | `k622rgb check` | Verify discovery, permissions and the descriptor hash |
 | `k622rgb list [--all]` | Print the main-key LED map and duplicate/dead slots |
-| `k622rgb set [KEY=COLOR ...]` | Write a per-key frame (`--all`, `--off`, `--reset`, `--from-device`, `--no-activate`, `--brightness 0-9`, `--dry-run`) |
+| `k622rgb set [KEY=COLOR ...]` | Write a per-key frame (`--all`, `--off`, `--reset`, `--from-device`, `--no-activate`, `--brightness 0-9`, `--dry-run`, `--group NAME=COLOR`) |
+| `k622rgb group list/set/apply/import` | Manage local colour groups, import vendor `GaoshouKey1..5`, and paint them into a per-key frame |
 | `k622rgb off` | Select the built-in OFF mode |
 | `k622rgb mode list/show/set` | Inspect or select the 20 built-in effects / Self-define / OFF, with brightness, speed, colour or random |
 | `k622rgb color list/show/set` | Inspect or edit the seven-colour effect palette |
@@ -254,7 +255,13 @@ Some commands add their own flags (`set --state/--no-state/--hex`,
 ./bin/k622rgb set --all 0000ff --brightness 6
 ./bin/k622rgb set --from-device 1=00ff00
 ./bin/k622rgb set --off
+./bin/k622rgb set --group fps=ff0000 --group arrows=00ff00 Esc=ffffff
 ./bin/k622rgb off
+
+./bin/k622rgb group list
+./bin/k622rgb group import Cfg.ini
+./bin/k622rgb group set 1=red 2=green 3=blue 4=yellow 5=cyan
+./bin/k622rgb group apply
 
 ./bin/k622rgb mode list
 ./bin/k622rgb mode set breathing --color 0000ff --brightness 7 --speed 1
@@ -586,6 +593,8 @@ python3 -m unittest discover -s tests -v
 - `check` gives a clear fix for every common discovery/permission failure.
 - No code path can send a firmware, bootloader, keymap or macro write.
 - Profiles round-trip and survive a restart.
+- Colour groups round-trip locally, `group import` never touches the device,
+  and `set --group` precedence is explicit key > group > base.
 - Config/palette persistence across a power cycle is documented; only the
   captured config/palette/frame writes are used.
 - Unit tests pass without hardware.
@@ -603,8 +612,8 @@ Out of scope for this plan, but natural next steps:
 - ~~Investigating the `GaoshouKey*` game-mode highlighting, if it turns out to
   be an RGB feature on this model.~~ Resolved: it is a per-key RGB feature
   (Color Group → Define1..5) that reuses the `09 cc` frame; see
-  [FINDINGS.md](FINDINGS.md) §12. A `k622rgb group` convenience command is
-  optional.
+  [FINDINGS.md](FINDINGS.md) §12. Implemented as `k622rgb group`
+  (`list`, `set`, `apply`, `import`) and `set --group NAME=COLOR`.
 - Keymap/macro editing, if a safe and captured protocol appears.
 - Wireless (Bluetooth/2.4 GHz) and ISO variants.
 - Plugin system for effects.

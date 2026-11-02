@@ -256,13 +256,14 @@ k622rgb profile delete gaming
 - Colour-byte values `8–15` are accepted by the firmware but not exposed by
   the official app; in testing they produced static colours, not direction.
   The CLI only exposes `0–6` plus random (`7`).
-- **Game-mode key groups** (`GaoshouKey1..5`) are a real per-key RGB feature,
-  but the official app exposes them in the key-assignment view
-  (**Color Group → Define1..5**), not the Lighting tab. The groups are lists
-  of Windows VK codes; each key is painted with its group's colour and the
-  result is a normal `09 cc` per-key frame shown in Self-define. `k622rgb` can
-  express the same result with `set`; there is no dedicated group command.
-  See [FINDINGS.md](FINDINGS.md) §12.
+- **Game-mode key groups** (`GaoshouKey1..5`) are a real per-key RGB feature
+  exposed by the official app under **Color Group → Define1..5**, not the
+  Lighting tab. The groups are lists of Windows VK codes; each key is painted
+  with its group's colour and the result is a normal `09 cc` per-key frame
+  shown in Self-define. `k622rgb group` exposes them locally:
+  `group list`, `group import Cfg.ini`, `group set NAME=COLOR [KEY...]`,
+  `group apply`, and `set --group NAME=COLOR`. See [FINDINGS.md](FINDINGS.md)
+  §12.
 - The `84 d8` profile table contains keymaps/macros. It is dumped read-only
   but never written.
 - The full packet-slot sweep found three addressable logo zones (packet slots

@@ -700,10 +700,13 @@ Decoded defaults:
 | Group | Keys |
 |---|---|
 | 1 | Esc, W, A, S, D, ↑, ↓, ←, → |
-| 2 | F1–F3, 1–5, Tab, QWERTY, Shift, B, Ctrl, Alt, Space, comma, PgUp/PgDn/Home/End |
-| 3 | 1–7, QWERTY, Shift, B, Ctrl, V, Tab |
+| 2 | F1–F3, 1–5, Tab, Q, W, E, R, A, S, D, G, Shift, B, Ctrl, Alt, Space, PrtSc, PgUp/PgDn/Home/End |
+| 3 | 1–7, Q, W, E, R, T, A, S, D, F, G, Shift, C, V, Ctrl |
 | 4 | 1–7, QWER, ASD, F |
 | 5 | W, R, A, S, D, Shift, Ctrl, Alt, arrows |
+
+The group lists use generic `0x10`/`0x11`/`0x12` modifier VKs; `k622rgb group
+import` expands those to both left and right Shift/Ctrl/Alt keys.
 
 `GaoshouKeyColor1..5` is a parallel byte-per-key list. `0` uses the global
 `clrGaoshou` (default `0xff`); `1..8` select the standard palette (red, green,
@@ -729,3 +732,9 @@ equivalent `09 cc` per-key frame, and the firmware shows it in mode 21. The
 is simply one way for the official app to generate the frame. `GaoshouAddr`
 (default `0xAC`) and `GameGpMask` (default `0`) are loaded, but their use was
 not exercised in the captured paths.
+
+`k622rgb group` implements this as a local convenience layer:
+`group import Cfg.ini` reads `GaoshouKey1..5` and maps VK codes through the
+`[KEY]` labels, `group set` stores colours and optional key lists, and
+`group apply` / `set --group NAME=COLOR` generate the same `09 cc` frame. No
+`09 d0` write is needed.
