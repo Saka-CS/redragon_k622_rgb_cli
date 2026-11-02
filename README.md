@@ -160,10 +160,23 @@ normal `09 cc` frame; no new protocol is used.
 ./bin/k622rgb group apply                # paint define1..5 + Self-define
 ```
 
-The five vendor groups are also seeded from the documented K622 defaults, so
-`group list` works before an import. `group import` reads `GaoshouKey1..5` and
-maps the Windows VK codes using the labels and `[KEY]` table in the same file.
-It never modifies `Cfg.ini` and never opens the keyboard.
+The five define groups are seeded with project defaults, so `group list` works
+before an import:
+
+| Group | Keys |
+|---|---|
+| `define1` | `W`, `A`, `S`, `D` |
+| `define2` | `Esc`, `F1`–`F12` |
+| `define3` | `PrtSc`, `ScrLk`, `Pause`, `Ins`, `Home`, `PgUp`, `Del`, `End`, `PgDn`, arrows |
+| `define4` | `` ` ``, `Tab`, `Caps`, both Shifts/Ctrls/Alts, `Win`, `Space`, `Fn`, `Menu`, `\`, `Enter`, `Bksp` |
+| `define5` | `A`–`Z`, `0`–`9`, `-`, `=`, `[`, `]`, `;`, `'`, `,`, `.`, `/` |
+
+`define5` is the broad letter/number/symbol layer. It overlaps `define1` on
+WASD by design. `group apply` paints `define5` first and then `define1..define4`,
+so WASD keeps its own colour. `group import` reads `GaoshouKey1..5` and maps the
+Windows VK codes using the labels and `[KEY]` table in the same file. It
+replaces the built-in definitions with the real vendor groups, never modifies
+`Cfg.ini`, and never opens the keyboard.
 
 `group set` can recolour an existing group, define a custom group from a key
 list, or update several groups at once:
@@ -189,8 +202,9 @@ Precedence is: `--all`/`--off`/saved/device base, then `--group` layers in
 command-line order (later wins), then explicit `KEY=COLOR` assignments.
 `group apply` starts from the same saved frame and saves the final frame to the
 same state file as `set`. Groups without a colour are skipped with a warning.
-With no names it applies `define1..define5`; later groups win on overlapping
-keys, and optional names are applied in the order given.
+With no names it applies `define5` first, then `define1..define4`, so `define1`
+keeps its WASD colour; later groups win on overlapping keys. Optional names are
+applied in the order given.
 
 ## Built-in effects
 

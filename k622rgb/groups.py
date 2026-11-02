@@ -3,8 +3,9 @@
 The official software exposes five game-mode colour groups (``Define1..5``).
 Those groups are lists of Windows virtual-key (VK) codes, and the software
 paints each group's colour into a normal ``09 cc`` per-key frame.  This module
-stores the same idea locally, adds a few ready-to-use presets, and imports the
-vendor defaults from ``Cfg.ini`` without touching the keyboard.
+stores the same idea locally with project defaults, adds a few ready-to-use
+presets, and can import the vendor groups from ``Cfg.ini`` without touching the
+keyboard.
 
 Nothing here talks to the device.
 """
@@ -24,6 +25,11 @@ GROUP_VERSION = 1
 #: Canonical names of the five groups defined by ``GaoshouKey1..5``.
 VENDOR_GROUP_NAMES = tuple("define%d" % index for index in range(1, 6))
 
+#: Default order for ``group apply`` without explicit names.  ``define5`` is
+#: the broad letter/number/symbol layer, so it is painted first and ``define1``
+#: then re-paints WASD with its own colour.
+DEFAULT_APPLY_ORDER = ("define5", "define1", "define2", "define3", "define4")
+
 #: Short aliases accepted for the vendor groups.
 _GROUP_ALIASES = {}
 for _index in range(1, 6):
@@ -40,32 +46,30 @@ _GENERIC_VK_KEYS = {
     0x12: ("LAlt", "RAlt"),
 }
 
-#: Vendor defaults from the documented K622 ``Cfg.ini``.  They are a
-#: convenience only; ``group import`` refreshes them from a real file.
-_BUILTIN_VENDOR = {
+#: Built-in key sets for the five Define groups.  These are project defaults,
+#: not the vendor ``Cfg.ini`` lists; ``group import`` replaces them with the
+#: real vendor values when used.  ``define5`` is the broad letter, number and
+#: symbol layer; ``define1`` intentionally highlights WASD on top of it.
+_BUILTIN_DEFINE = {
     "define1": (
-        "Esc", "W", "A", "S", "D",
-        "Up", "Down", "Left", "Right",
+        "W", "A", "S", "D",
     ),
     "define2": (
-        "F1", "F2", "F3", "1", "2", "3", "4", "5",
-        "Tab", "Q", "W", "E", "R", "A", "S", "D", "G",
-        "LShift", "RShift", "B", "LCtrl", "RCtrl", "LAlt", "RAlt", "Space",
-        "PrtSc", "PgUp", "PgDn", "Home", "End",
+        "Esc", "F1", "F2", "F3", "F4", "F5", "F6",
+        "F7", "F8", "F9", "F10", "F11", "F12",
     ),
     "define3": (
-        "1", "2", "3", "4", "5", "6", "7",
-        "Q", "W", "E", "R", "T", "A", "S", "D", "F", "G",
-        "LShift", "RShift", "C", "V", "LCtrl", "RCtrl",
+        "PrtSc", "ScrLk", "Pause",
+        "Ins", "Home", "PgUp", "Del", "End", "PgDn",
+        "Up", "Down", "Left", "Right",
     ),
     "define4": (
-        "1", "2", "3", "4", "5", "6", "7",
-        "Q", "W", "E", "R", "A", "S", "D", "F",
+        "`", "Tab", "Caps", "LShift", "RShift",
+        "LCtrl", "RCtrl", "Win", "LAlt", "RAlt",
+        "Space", "Fn", "Menu", "\\", "Enter", "Bksp",
     ),
-    "define5": (
-        "W", "R", "A", "S", "D",
-        "LShift", "RShift", "LCtrl", "RCtrl", "LAlt", "RAlt",
-        "Up", "Down", "Left", "Right",
+    "define5": tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") + (
+        "-", "=", "[", "]", ";", "'", ",", ".", "/",
     ),
 }
 
@@ -102,7 +106,7 @@ _PRESETS = {
 PRESET_GROUP_NAMES = tuple(_PRESETS)
 
 #: Every built-in group name.
-BUILTIN_GROUP_NAMES = tuple(_BUILTIN_VENDOR) + PRESET_GROUP_NAMES
+BUILTIN_GROUP_NAMES = tuple(_BUILTIN_DEFINE) + PRESET_GROUP_NAMES
 
 
 class GroupError(RuntimeError):
@@ -116,7 +120,7 @@ def _copy_group(group: Dict) -> Dict:
 def _builtin_groups() -> Dict[str, Dict]:
     result = {
         name: {"keys": tuple(keys), "color": None}
-        for name, keys in _BUILTIN_VENDOR.items()
+        for name, keys in _BUILTIN_DEFINE.items()
     }
     for name, (keys, color) in _PRESETS.items():
         result[name] = {"keys": tuple(keys), "color": color}

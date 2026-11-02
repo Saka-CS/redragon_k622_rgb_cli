@@ -85,12 +85,40 @@ class GroupModelTests(unittest.TestCase):
 
     def test_builtins_and_aliases(self):
         effective = groups.effective_groups()
+        expected = {
+            "define1": ("W", "A", "S", "D"),
+            "define2": ("Esc",) + tuple("F%d" % index for index in range(1, 13)),
+            "define3": (
+                "PrtSc", "ScrLk", "Pause",
+                "Ins", "Home", "PgUp", "Del", "End", "PgDn",
+                "Up", "Down", "Left", "Right",
+            ),
+            "define4": (
+                "`", "Tab", "Caps", "LShift", "RShift",
+                "LCtrl", "RCtrl", "Win", "LAlt", "RAlt",
+                "Space", "Fn", "Menu", "\\", "Enter", "Bksp",
+            ),
+            "define5": tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") + (
+                "-", "=", "[", "]", ";", "'", ",", ".", "/",
+            ),
+        }
+        for name, keys in expected.items():
+            with self.subTest(name=name):
+                self.assertEqual(effective[name]["keys"], keys)
+                self.assertEqual(len(keys), len(set(keys)))
+
+        names = list(expected)
+        overlaps = []
+        for index, first in enumerate(names):
+            for second in names[index + 1:]:
+                shared = set(expected[first]) & set(expected[second])
+                if shared:
+                    overlaps.append((first, second, shared))
         self.assertEqual(
-            effective["define1"]["keys"],
-            ("Esc", "W", "A", "S", "D", "Up", "Down", "Left", "Right"),
+            overlaps,
+            [("define1", "define5", {"W", "A", "S", "D"})],
         )
-        self.assertIn("G", effective["define2"]["keys"])
-        self.assertNotIn("T", effective["define2"]["keys"])
+
         self.assertEqual(effective["fps"]["keys"][:4], ("W", "A", "S", "D"))
         self.assertEqual(effective["fps"]["color"], (255, 0, 0))
         for alias in ("1", "group1", "DEFINE1"):
@@ -276,9 +304,9 @@ class GroupCliTests(unittest.TestCase):
     def test_list_does_not_open_device(self):
         code, out, err, opener = self.run_cli(["group", "list"])
         self.assertEqual(code, 0)
-        self.assertIn("vendor groups:", out)
+        self.assertIn("define groups:", out)
         self.assertIn("define1", out)
-        self.assertIn("Esc, W, A, S, D", out)
+        self.assertRegex(out, r"define1\s+unset\s+W, A, S, D")
         self.assertIn("presets:", out)
         self.assertIn("fps", out)
         self.assertIn("local groups:", out)
@@ -301,6 +329,18 @@ class GroupCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("group: define1 = #ff0000", out)
         self.assertIn("dry run", out)
+        opener.assert_not_called()
+
+    def test_default_apply_order_puts_define5_before_define1(self):
+        self.run_cli(["group", "set", "1=red", "5=cyan"])
+        code, out, _err, opener = self.run_cli(
+            ["group", "apply", "--dry-run", "--no-state"]
+        )
+        self.assertEqual(code, 0)
+        self.assertLess(
+            out.index("group: define5 = #00ffff"),
+            out.index("group: define1 = #ff0000"),
+        )
         opener.assert_not_called()
 
     def test_apply_skips_unset_and_errors_when_none_coloured(self):

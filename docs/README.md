@@ -89,7 +89,7 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 ./bin/k622rgb profile save gaming                         # local lighting profile
 ./bin/k622rgb profile load gaming
 ./bin/k622rgb profile list
-./bin/k622rgb group list                                  # vendor groups + presets
+./bin/k622rgb group list                                  # define groups + presets
 ./bin/k622rgb group import Cfg.ini                        # read-only local import
 ./bin/k622rgb group set 1=red 2=green 3=blue 4=yellow 5=cyan
 ./bin/k622rgb group apply                                 # paint + Self-define
@@ -151,10 +151,11 @@ profiles; the keyboard's keymap/macro table is never written.
 ./bin/k622rgb profile delete gaming
 ```
 
-Colour groups mirror the official **Color Group → Define1..5** feature.
-`group import Cfg.ini` reads `GaoshouKey1..5` and the `[KEY]` VK labels without
-touching the device; `group set` stores colours and optional custom key lists;
-`group apply` and `set --group NAME=COLOR` paint them through the normal
+Colour groups mirror the official **Color Group → Define1..5** feature. The
+built-in `define1..5` key sets are project defaults; `group import Cfg.ini`
+replaces them with the real `GaoshouKey1..5` definitions and `[KEY]` VK labels
+without touching the device. `group set` stores colours and optional custom key
+lists; `group apply` and `set --group NAME=COLOR` paint them through the normal
 per-key frame. The group store is `~/.config/k622rgb/groups.json`.
 
 `info`, `dump`, `check`, and `list` are read-only. `set` sends the captured

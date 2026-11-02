@@ -683,8 +683,10 @@ class CliTests(unittest.TestCase):
         opener.assert_called_once_with(self.node, writable=True)
         writer.assert_called_once()
         _fd, packet = writer.call_args.args
-        self.assertEqual(packet[8], 255)      # Esc
-        self.assertEqual(packet[134], 0)
+        self.assertEqual(packet[8 + 44], 255)    # W
+        self.assertEqual(packet[134 + 44], 0)
+        self.assertEqual(packet[260 + 44], 0)
+        self.assertEqual(packet[8], 0)           # Esc is not in define1
         self.assertEqual(Path(state_path).read_bytes(), packet)
 
     # -- list ------------------------------------------------------------

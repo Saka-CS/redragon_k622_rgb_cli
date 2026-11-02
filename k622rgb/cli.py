@@ -285,7 +285,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "The official software's Color Group -> Define1..5 feature paints "
             "lists of keys from a 09 cc per-key frame. This command stores "
-            "those groups locally, imports the vendor defaults from Cfg.ini, "
+            "those groups locally, imports the vendor groups from Cfg.ini, "
             "and paints them. It never writes a keymap or macro table."
         ),
     )
@@ -294,7 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     group_list = group_sub.add_parser(
-        "list", help="show the five vendor groups, presets and local groups"
+        "list", help="show the five define groups, presets and local groups"
     )
     _add_global_flags(group_list, suppress_defaults=True)
     group_list.add_argument(
@@ -1204,7 +1204,7 @@ def cmd_group_list(args: argparse.Namespace) -> int:
 
     print("group file: %s" % path)
     print()
-    print("vendor groups:")
+    print("define groups:")
     for name in groups.VENDOR_GROUP_NAMES:
         _print_group(name, effective[name], name in local)
     print()
@@ -1251,7 +1251,7 @@ def cmd_group_set(args: argparse.Namespace) -> int:
 def cmd_group_apply(args: argparse.Namespace) -> int:
     local = groups.load_local_groups(args.file)
     effective = groups.effective_groups(local)
-    names = args.names or list(groups.VENDOR_GROUP_NAMES)
+    names = args.names or list(groups.DEFAULT_APPLY_ORDER)
     layers = []
     for raw_name in names:
         name = groups.canonical_group_name(raw_name)
