@@ -600,8 +600,11 @@ Out of scope for this plan, but natural next steps:
 - Ambient/system-monitor modes (CPU, audio VU).
 - GUI/tray.
 - MQTT/Home Assistant integration.
-- Investigating the `GaoshouKey*` game-mode highlighting, if it turns out to be
-  an RGB feature on this model.
+- ~~Investigating the `GaoshouKey*` game-mode highlighting, if it turns out to
+  be an RGB feature on this model.~~ Resolved: it is a per-key RGB feature
+  (Color Group → Define1..5) that reuses the `09 cc` frame; see
+  [FINDINGS.md](FINDINGS.md) §12. A `k622rgb group` convenience command is
+  optional.
 - Keymap/macro editing, if a safe and captured protocol appears.
 - Wireless (Bluetooth/2.4 GHz) and ISO variants.
 - Plugin system for effects.

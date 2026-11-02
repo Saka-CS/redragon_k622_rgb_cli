@@ -277,10 +277,14 @@ Fields:
 |---|---:|---|
 | `x1,y1,x2,y2` | `266,148,288,173` | Key rectangle in the UI |
 | type | `0x02` | Key type |
-| usage | `0x4A` | HID usage code (J) |
+| usage | `0x4A` | Windows virtual-key (VK) code (J) |
 | modifier | `0x00` | Modifier byte |
 | **LED slot** | **`45`** | **Index in the 126-slot LED packet** |
 | key index | `70` | Separate internal index (0–121), not the LED slot |
+
+The `usage` column is a Windows **VK code**, not a HID usage code: `0x4A` is
+`VK_J` and `0x70` is `VK_F1` (HID usage `0x0D`/`0x3A` respectively). The
+`GaoshouKey*` group lists in §12 use the same VK code space.
 
 The `[KEY]` section contains **87 entries**, using `Cfg.ini` LED slots
 `0–101` with 15 gaps. These are *Cfg.ini* slots, not report-0x06 packet slots;
@@ -668,4 +672,60 @@ effects, each seven RGB triples). The custom per-key frame is readable with
 
 `Cfg.ini`'s `LedOpt1..LedOpt20` rows supply the per-mode feature flags
 (speed, brightness, random, colour). The `GaoshouKey*` / `GameGpMask` rows
-belong to key-group features, not the lighting tab, and are not implemented.
+are a per-key RGB feature; see §12.
+
+## 12. Follow-up (2026-11-02): game-mode key groups (`GaoshouKey*`)
+
+The `GaoshouKey*` entries are a **per-key RGB colouring feature**, not a
+keymap/macro feature. The official app exposes them in the key-assignment
+view, not the Lighting tab:
+
+- right-click a key → **Color Group** → **Define1..5**
+  (`tc_msg28`, `tc_game_mode1..5`; menu command IDs `0xfb` and `0x10f..0x113`).
+
+`Cfg.ini` defines five groups. Each list holds **Windows virtual-key (VK)
+codes**, the same code space as the `usage` column of `[KEY]`:
+
+```ini
+GaoshouIndex=20
+GaoshouKey1=1b,57,41,53,44,26,28,25,27
+GaoshouKey2=70,71,72,31,32,33,34,35,9,51,57,45,52,41,53,44,47,10,42,11,12,20,2c,21,22,24,23
+GaoshouKey3=31,32,33,34,35,36,37,51,57,45,52,54,41,53,44,46,47,10,43,56,11
+GaoshouKey4=31,32,33,34,35,36,37,51,57,45,52,41,53,44,46
+GaoshouKey5=57,52,41,53,44,10,11,12,26,28,25,27
+```
+
+Decoded defaults:
+
+| Group | Keys |
+|---|---|
+| 1 | Esc, W, A, S, D, ↑, ↓, ←, → |
+| 2 | F1–F3, 1–5, Tab, QWERTY, Shift, B, Ctrl, Alt, Space, comma, PgUp/PgDn/Home/End |
+| 3 | 1–7, QWERTY, Shift, B, Ctrl, V, Tab |
+| 4 | 1–7, QWER, ASD, F |
+| 5 | W, R, A, S, D, Shift, Ctrl, Alt, arrows |
+
+`GaoshouKeyColor1..5` is a parallel byte-per-key list. `0` uses the global
+`clrGaoshou` (default `0xff`); `1..8` select the standard palette (red, green,
+blue, magenta, cyan, yellow, white, orange). `GameRGBIndex=0,1,2` gives the
+channel order.
+
+### How it is rendered
+
+- `0x4428a0` builds the frame: for each group it maps every VK code to a key
+  slot via `0x442200`, then writes that group's colour into a per-key colour
+  array.
+- `GaoshouIndex` is compared with the current LED mode at `0x4112b0`. The
+  app's mode index is 0-based (`0x411010` indexes the `LedOpt` table with it,
+  and `0x41ceda` uses it as a `LedMask` bit), so `GaoshouIndex=20` is UI mode
+  **21, Self-define**.
+- In that mode the app skips the plain per-key payload, sets the "game" flag in
+  the `09 d0` packet, and sends `09 cc` + `09 d0` (`0x411659`/`0x4116a9`) —
+  the same opcodes `k622rgb` already uses.
+
+The feature therefore needs **no new protocol**. `k622rgb set` writes an
+equivalent `09 cc` per-key frame, and the firmware shows it in mode 21. The
+`09 d0` game flag is not required for ordinary per-key colours; the group menu
+is simply one way for the official app to generate the frame. `GaoshouAddr`
+(default `0xAC`) and `GameGpMask` (default `0`) are loaded, but their use was
+not exercised in the captured paths.

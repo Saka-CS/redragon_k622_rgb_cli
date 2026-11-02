@@ -428,8 +428,12 @@ slots.
 
 The capture and hardware-write gates are closed. Remaining work:
 
-1. Investigate whether the key-group (`GaoshouKey*`) game-mode highlighting is
-   an RGB feature on this model; it is not exposed by the lighting tab.
+1. ~~Investigate whether the key-group (`GaoshouKey*`) game-mode highlighting
+   is an RGB feature on this model; it is not exposed by the lighting tab.~~
+   **Resolved:** it is a per-key RGB feature exposed by the app's
+   key-assignment **Color Group → Define1..5** menu, not the Lighting tab. It
+   reuses the `09 cc` per-key frame and needs no new opcode. See
+   [FINDINGS.md](FINDINGS.md) §12.
 2. Optional: daemon/IPC or reactive key effects (out of the current scope).
 
 Do not send `09 d0`, `03 c6`, or `04 d8` unless a new, captured need appears.
