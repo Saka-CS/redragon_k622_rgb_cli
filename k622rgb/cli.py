@@ -1284,9 +1284,10 @@ def cmd_group_apply(args: argparse.Namespace) -> int:
 
 
 def cmd_group_import(args: argparse.Namespace) -> int:
+    source = os.path.expanduser(args.path)
     local = groups.load_local_groups(args.file)
     existing = groups.effective_groups(local)
-    imported, warnings = groups.import_cfg_ini(args.path, existing)
+    imported, warnings = groups.import_cfg_ini(source, existing)
     for warning in warnings:
         print("warning: %s" % warning, file=sys.stderr)
 
@@ -1295,7 +1296,7 @@ def cmd_group_import(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         print("dry run: parsed %d group%s from %s"
-              % (len(imported), "" if len(imported) == 1 else "s", args.path))
+              % (len(imported), "" if len(imported) == 1 else "s", source))
         for name in groups.VENDOR_GROUP_NAMES:
             if name in imported:
                 print(_group_summary(name, imported[name]))
@@ -1303,7 +1304,7 @@ def cmd_group_import(args: argparse.Namespace) -> int:
         return EXIT_OK
 
     path = groups.save_local_groups(local, args.file)
-    print("imported: %s" % os.path.expanduser(args.path))
+    print("imported: %s" % source)
     print("group file: %s" % path)
     for name in groups.VENDOR_GROUP_NAMES:
         if name in imported:

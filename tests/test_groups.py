@@ -283,17 +283,17 @@ class GroupCliTests(unittest.TestCase):
         self.cfg_file = self.root / "Cfg.ini"
         self.cfg_file.write_text(cfg_ini_text(), encoding="utf-8")
 
-    def run_cli(self, argv):
+    def run_cli(self, argv, env=None):
         out = io.StringIO()
         err = io.StringIO()
-        with mock.patch.dict(
-            os.environ,
-            {
-                "XDG_CONFIG_HOME": str(self.root / "config"),
-                "XDG_STATE_HOME": str(self.root / "state"),
-                "K622RGB_GROUP_FILE": self.group_file,
-            },
-        ):
+        environ = {
+            "XDG_CONFIG_HOME": str(self.root / "config"),
+            "XDG_STATE_HOME": str(self.root / "state"),
+            "K622RGB_GROUP_FILE": self.group_file,
+        }
+        if env:
+            environ.update(env)
+        with mock.patch.dict(os.environ, environ):
             with mock.patch(
                 "k622rgb.cli.controller.open_device"
             ) as opener:
@@ -390,6 +390,26 @@ class GroupCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("imported:", out)
         self.assertIn("define1", out)
+        self.assertEqual(err, "")
+        opener.assert_not_called()
+        self.assertTrue(Path(self.group_file).exists())
+
+    def test_import_expands_tilde_in_path(self):
+        code, out, _err, opener = self.run_cli(
+            ["group", "import", "--dry-run", "~/Cfg.ini"],
+            env={"HOME": str(self.root)},
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("from %s" % self.cfg_file, out)
+        self.assertFalse(Path(self.group_file).exists())
+        opener.assert_not_called()
+
+        code, out, err, opener = self.run_cli(
+            ["group", "import", "~/Cfg.ini"],
+            env={"HOME": str(self.root)},
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("imported: %s" % self.cfg_file, out)
         self.assertEqual(err, "")
         opener.assert_not_called()
         self.assertTrue(Path(self.group_file).exists())
