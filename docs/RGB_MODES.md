@@ -173,8 +173,16 @@ base, so successive `set` calls remain additive even after a reboot or after
 the official app changed the frame.
 
 The second custom table, `09 d0` / `89 d0`, is read by
-`k622rgb config dump` but not written by the CLI. It is not needed for
+`k622rgb config dump` but not written by the normal CLI. It is not needed for
 per-key colours.
+
+`set --game-flag` is an experimental opt-in: it reads the current `09 d0`
+payload, changes one byte (default `payload[0] = 1`) and sends it after the
+`09 cc` frame. The byte offset is not verified; probe it with
+`--game-flag-offset`/`--game-flag-value`. Every run backs up the config,
+palette and both custom frames, so `config restore --custom BACKUP` recovers
+the previous state.
+
 
 ## 6. Persistence
 

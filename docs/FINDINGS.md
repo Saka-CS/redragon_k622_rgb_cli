@@ -738,3 +738,37 @@ not exercised in the captured paths.
 `[KEY]` labels, `group set` stores colours and optional key lists, and
 `group apply` / `set --group NAME=COLOR` generate the same `09 cc` frame. No
 `09 d0` write is needed.
+
+### The `09 d0` "game" byte (experimental, unverified)
+
+The app's lighting routine has exactly one `09 cc`/`09 d0` writer
+(`0x445920`), called from `0x411150`. The `09 d0` payload is sourced from
+`[esp+0xcc4]`; in the normal path that stack region is zeroed at `0x411448`
+and only the `09 cc` colour planes are filled. No explicit write of a
+"game" byte into the `09 d0` payload was found in `KeyboardDrv.exe` V1.6.6.
+The game-mode comparison at `0x4112b0` (`GaoshouIndex` vs. current mode)
+branches into an `08 c8` palette write and then falls through to the normal
+`09 cc` → `09 d0` send.
+
+A live `05 89 d0` read-back from the K622 is **not** all zero and does **not**
+match the latch hash recorded in §6.3 (`ce6cd1…`), so the captured latch
+artifact is not reproducible from the current state. The payload has the shape
+of a 1024-byte table with several 126-byte key masks at offsets `0x000`,
+`0x180` and `0x310`; the meaning of those regions is not known.
+
+Because the byte location is unknown, `set --game-flag` is an opt-in
+experiment:
+
+- it reads the current `09 d0` frame from the keyboard (no hard-coded
+  template);
+- it changes one byte (`--game-flag-offset`, default `0`) to
+  `--game-flag-value` (default `1`);
+- it sends `09 cc`, then `09 d0`, then `03 c6` only when Self-define
+  activation is needed;
+- it backs up the config, palette, `09 cc` and `09 d0` tables first;
+- it prints the old/new byte and the resulting payload hash.
+
+The default offset is a hypothesis, not a confirmed protocol field. To test a
+different byte, pass `--game-flag-offset`; to clear it, pass
+`--game-flag-value 0`. Record the result here once the effect (or lack of one)
+is confirmed on hardware. Recovery is `config restore --custom BACKUP`.

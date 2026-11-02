@@ -95,6 +95,58 @@ to read the custom frame back from the keyboard.
 per-key frames are ignored while an effect is active. Use `--no-activate` to
 leave the current effect running.
 
+### Experimental `--game-flag`
+
+The official app also uses the second custom table, the `09 d0` companion.
+`set --game-flag` reads the keyboard's current `09 d0` payload, changes one
+byte, and sends it after the `09 cc` frame. The byte location is **not yet
+verified**; the default is `payload[0] = 1`. The offset and value can be
+overridden to probe the field:
+
+```bash
+./bin/k622rgb set --game-flag Esc=red
+./bin/k622rgb set --game-flag --game-flag-offset 6 --game-flag-value 1 Esc=red
+./bin/k622rgb set --game-flag --game-flag-value 0 --no-activate Esc=red
+```
+
+Every run backs up the config, palette and both custom frames before writing.
+Recover with `config restore --custom BACKUP`. This command is experimental:
+it does not change the default `set` behaviour, and the semantics of the byte
+are unknown until confirmed on hardware.
+
+To exercise the feature automatically:
+
+```bash
+# unit tests + dry-run + argument validation; no device access
+python3 tools/test_game_flag.py
+
+# also write/read back/restore on the connected keyboard
+python3 tools/test_game_flag.py --hardware
+
+# use a specific byte and keep the backup
+python3 tools/test_game_flag.py --hardware \
+  --offset 6 --value 1 --backup ./game-flag-backup
+```
+
+The hardware test always attempts to restore the original config, palette and
+custom frames, retrying if the keyboard re-enumerates.
+
+For the semantic question — whether the byte actually changes behaviour — use
+the interactive probe:
+
+```bash
+# read-only state report
+python3 tools/game_flag_visual.py
+
+# write payload[0], [1], ..., [5] one at a time and record what you observe
+python3 tools/game_flag_visual.py --write --offsets 0,1,2,3,4,5
+```
+
+It prints a read-back after every write, asks whether the keyboard changed,
+and restores the original `09 d0` frame when you exit (including Ctrl-C).
+
+
+
 ## Colour groups
 
 The official app's **Color Group → Define1..5** feature is a per-key colour

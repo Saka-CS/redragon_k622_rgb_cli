@@ -614,6 +614,10 @@ Out of scope for this plan, but natural next steps:
   (Color Group → Define1..5) that reuses the `09 cc` frame; see
   [FINDINGS.md](FINDINGS.md) §12. Implemented as `k622rgb group`
   (`list`, `set`, `apply`, `import`) and `set --group NAME=COLOR`.
+- Confirming the `09 d0` game byte. `set --game-flag` implements the
+  experiment (read the current frame, change one byte, send it, back up
+  first); the byte offset and semantics are still unverified. See
+  [FINDINGS.md](FINDINGS.md) §12.
 - Keymap/macro editing, if a safe and captured protocol appears.
 - Wireless (Bluetooth/2.4 GHz) and ISO variants.
 - Plugin system for effects.

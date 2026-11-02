@@ -131,6 +131,30 @@ def _add_frame_flags(parser: argparse.ArgumentParser) -> None:
         metavar="0-9",
         help="software-scale the final frame to brightness level 0-9",
     )
+    parser.add_argument(
+        "--game-flag",
+        action="store_true",
+        help=(
+            "experimental: also send the 09 d0 companion with a game byte "
+            "written (default offset %d, value 1); see --game-flag-offset/"
+            "--game-flag-value" % controller.GAME_FLAG_OFFSET
+        ),
+    )
+    parser.add_argument(
+        "--game-flag-offset",
+        type=int,
+        metavar="0-1023",
+        help=(
+            "experimental: byte offset inside the 09 d0 payload "
+            "(default: %d)" % controller.GAME_FLAG_OFFSET
+        ),
+    )
+    parser.add_argument(
+        "--game-flag-value",
+        type=int,
+        metavar="0-255",
+        help="experimental: value for the game byte (default: 1)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -879,6 +903,18 @@ def _run_set(
         raise ValueError("--state and --no-state are mutually exclusive")
     if args.brightness is not None and not 0 <= args.brightness <= 9:
         raise ValueError("--brightness must be 0..9")
+    game_offset = controller.GAME_FLAG_OFFSET
+    game_value = controller.GAME_FLAG_ON
+    if args.game_flag_offset is not None:
+        if not args.game_flag:
+            raise ValueError("--game-flag-offset requires --game-flag")
+        game_offset = args.game_flag_offset
+    if args.game_flag_value is not None:
+        if not args.game_flag:
+            raise ValueError("--game-flag-value requires --game-flag")
+        game_value = args.game_flag_value
+    if args.game_flag:
+        controller.validate_game_flag(game_offset, game_value)
     if not (changes or group_layers or args.fill is not None or args.off):
         raise ValueError(
             "nothing to set: give KEY=COLOR, --group NAME=COLOR, "
@@ -983,6 +1019,11 @@ def _run_set(
                 controller.hidiocsfeature(len(packet)),
             )
         )
+        if args.game_flag:
+            print(
+                "dry run: would read the current 09 d0 companion and set "
+                "payload[%d] = 0x%02X" % (game_offset, game_value)
+            )
         print("dry run: device not opened; saved frame not updated")
         _print_packet_hex(packet)
         return EXIT_OK
@@ -1014,28 +1055,75 @@ def _run_set(
     )
 
     fd = controller.open_device(node, writable=True)
-    activation_backup = None
+    backup_path = None
     activation_needed = False
     activation_failed = False
+    game_payload = None
+    game_written = False
+    game_failed = False
     try:
         # Read the config before writing the colour frame. The keyboard can
         # stall a report-5 mailbox command if it arrives immediately after a
         # 09 cc transfer, so do the read first and reuse the result.
+        current = None
         if args.activate:
             current = controller.read_config(fd)
             parsed = controller.parse_config(current)
             activation_needed = (
                 parsed.mode != controller.PER_KEY_MODE or not parsed.per_key
             )
-            if activation_needed:
-                activation_backup = _save_lighting_backup(
-                    fd, data, "activate per-key"
+
+        if args.game_flag:
+            base_frame = controller.read_custom_frame(fd, 2)
+            old_value = controller.read_game_flag(base_frame, game_offset)
+            game_payload = controller.set_game_flag(
+                base_frame, game_value, game_offset
+            )
+            print(
+                "game flag: 09 d0 payload[%d] 0x%02X -> 0x%02X "
+                "(frame sha256 %s)"
+                % (
+                    game_offset,
+                    old_value,
+                    game_value,
+                    controller.descriptor_sha256(game_payload),
                 )
-        frame_written = False
-        try:
-            controller.write_feature(fd, packet)
-            frame_written = True
-            if activation_needed:
+            )
+
+        if activation_needed or game_payload is not None:
+            if activation_needed and game_payload is not None:
+                note = "game flag + activate per-key"
+            elif game_payload is not None:
+                note = "game flag"
+            else:
+                note = "activate per-key"
+            backup_path = _save_lighting_backup(
+                fd, data, note, custom=game_payload is not None
+            )
+            print("backup: %s" % backup_path)
+
+        controller.write_feature(fd, packet)
+
+        if game_payload is not None:
+            try:
+                time.sleep(0.05)
+                controller.write_custom_frame(fd, game_payload, 2)
+                game_written = True
+            except controller.DeviceError as exc:
+                game_failed = True
+                print(
+                    "warning: colour frame sent, but the experimental 09 d0 "
+                    "game-flag write failed: %s" % exc,
+                    file=sys.stderr,
+                )
+                print(
+                    "warning: run `k622rgb config restore --custom %s` to "
+                    "recover the stored frames" % backup_path,
+                    file=sys.stderr,
+                )
+
+        if activation_needed and not game_failed:
+            try:
                 time.sleep(0.05)
                 controller.write_config(
                     fd,
@@ -1043,8 +1131,7 @@ def _run_set(
                         current, mode=controller.PER_KEY_MODE
                     ),
                 )
-        except controller.DeviceError as exc:
-            if frame_written and activation_needed:
+            except controller.DeviceError as exc:
                 activation_failed = True
                 print(
                     "warning: colour frame sent, but switching to "
@@ -1055,8 +1142,6 @@ def _run_set(
                     "warning: run `k622rgb mode set per-key` and retry",
                     file=sys.stderr,
                 )
-            else:
-                raise
     finally:
         try:
             os.close(fd)
@@ -1071,11 +1156,19 @@ def _run_set(
             len(controller.lit_slots(render_colors)),
         )
     )
+    if args.game_flag:
+        if game_failed:
+            pass
+        elif game_written:
+            print(
+                "wrote 09 d0 companion; game byte payload[%d] = 0x%02X"
+                % (game_offset, game_value)
+            )
     if args.activate:
         if activation_failed:
             pass
-        elif activation_backup:
-            print("activated Self-define mode; backup: %s" % activation_backup)
+        elif activation_needed:
+            print("activated Self-define mode; backup: %s" % backup_path)
         else:
             print("Self-define mode already active")
     if args.hex:
@@ -1086,7 +1179,7 @@ def _run_set(
             print("saved frame to %s" % state_path)
         except state.StateError as exc:
             print("warning: %s" % exc, file=sys.stderr)
-    return EXIT_ERROR if activation_failed else EXIT_OK
+    return EXIT_ERROR if (activation_failed or game_failed) else EXIT_OK
 
 
 def _group_summary(name: str, group: Dict) -> str:
@@ -1851,17 +1944,20 @@ def cmd_config_restore(args: argparse.Namespace) -> int:
         if palette is not None:
             controller.write_effect_palette(fd, palette)
         if custom1 is not None:
+            time.sleep(0.05)
             controller.write_custom_frame(
                 fd,
                 controller.payload_from_response(custom1, controller.CUSTOM_PAYLOAD_SIZE),
                 1,
             )
         if custom2 is not None:
+            time.sleep(0.05)
             controller.write_custom_frame(
                 fd,
                 controller.payload_from_response(custom2, controller.CUSTOM_PAYLOAD_SIZE),
                 2,
             )
+        time.sleep(0.05)
         controller.write_config(fd, config)
     finally:
         os.close(fd)
