@@ -260,6 +260,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NAME=COLOR",
         help="paint a stored group before applying KEY=COLOR overrides",
     )
+    set_parser.add_argument(
+        "--file", metavar="FILE", help="group store override"
+    )
     set_parser.set_defaults(func=cmd_set)
 
     list_parser = subparsers.add_parser(
@@ -884,7 +887,7 @@ def _read_device_custom_colors(args: argparse.Namespace):
 def cmd_set(args: argparse.Namespace) -> int:
     changes = _parse_assignments(args.assignments)
     group_layers = (
-        groups.resolve_group_layers(args.group_overlays)
+        groups.resolve_group_layers(args.group_overlays, args.file)
         if args.group_overlays
         else []
     )

@@ -652,6 +652,41 @@ class CliTests(unittest.TestCase):
         self.assertEqual(packet[260 + 2], 255)
         self.assertEqual(packet[8 + 2], 0)
 
+    def test_set_group_overlay_honours_file_override(self):
+        group_file = self.root / "custom-groups.json"
+        local = {}
+        groups.update_local_group(local, "mygroup", (255, 0, 0), ["W", "A"])
+        groups.save_local_groups(local, str(group_file))
+
+        code, out, err, opener, _reader, writer = self.run_cli(
+            [
+                "set", "--dry-run", "--no-state",
+                "--file", str(group_file),
+                "--group", "mygroup=ff0000",
+                "Esc=white",
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("group: mygroup = #ff0000", out)
+        self.assertIn("set: Esc (slot 0) = #ffffff", out)
+        self.assertEqual(err, "")
+        opener.assert_not_called()
+        writer.assert_not_called()
+
+    def test_set_group_overlay_without_file_ignores_custom_store(self):
+        group_file = self.root / "custom-groups.json"
+        local = {}
+        groups.update_local_group(local, "mygroup", (255, 0, 0), ["W", "A"])
+        groups.save_local_groups(local, str(group_file))
+
+        code, _out, err, opener, _reader, writer = self.run_cli(
+            ["set", "--dry-run", "--no-state", "--group", "mygroup=ff0000"]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("unknown group 'mygroup'", err)
+        opener.assert_not_called()
+        writer.assert_not_called()
+
     def test_plain_set_ignores_corrupt_group_store(self):
         group_file = self.root / "config" / "k622rgb" / "groups.json"
         group_file.parent.mkdir(parents=True)

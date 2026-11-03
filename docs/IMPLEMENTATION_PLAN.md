@@ -224,7 +224,7 @@ def write_feature(fd: int, packet) -> int:
 | `k622rgb dump --report {5,6}` | Read a declared feature report (read-only) |
 | `k622rgb check` | Verify discovery, permissions and the descriptor hash |
 | `k622rgb list [--all]` | Print the main-key LED map and duplicate/dead slots |
-| `k622rgb set [KEY=COLOR ...]` | Write a per-key frame (`--all`, `--off`, `--reset`, `--from-device`, `--no-activate`, `--brightness 0-9`, `--dry-run`, `--group NAME=COLOR`) |
+| `k622rgb set [KEY=COLOR ...]` | Write a per-key frame (`--all`, `--off`, `--reset`, `--from-device`, `--no-activate`, `--brightness 0-9`, `--dry-run`, `--group NAME=COLOR`, `--file FILE`) |
 | `k622rgb group list/set/apply/import` | Manage local colour groups, import vendor `GaoshouKey1..5`, and paint them into a per-key frame |
 | `k622rgb off` | Select the built-in OFF mode |
 | `k622rgb mode list/show/set` | Inspect or select the 20 built-in effects / Self-define / OFF, with brightness, speed, colour or random |

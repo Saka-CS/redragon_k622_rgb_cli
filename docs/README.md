@@ -156,7 +156,9 @@ built-in `define1..5` key sets are project defaults; `group import Cfg.ini`
 replaces them with the real `GaoshouKey1..5` definitions and `[KEY]` VK labels
 without touching the device. `group set` stores colours and optional custom key
 lists; `group apply` and `set --group NAME=COLOR` paint them through the normal
-per-key frame. The group store is `~/.config/k622rgb/groups.json`.
+per-key frame. The group store is `~/.config/k622rgb/groups.json`
+(respecting `XDG_CONFIG_HOME`; override with `--file` or `K622RGB_GROUP_FILE`
+for both the `group` subcommands and `set --group`).
 
 `info`, `dump`, `check`, and `list` are read-only. `set` sends the captured
 `09 cc` report-6 frame and switches to Self-define mode by default (use

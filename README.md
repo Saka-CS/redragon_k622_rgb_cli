@@ -189,13 +189,15 @@ list, or update several groups at once:
 
 Shipped presets: `wasd`, `arrows`, `fps`, `moba`, `mmo` and `typing`. Groups
 are stored in `~/.config/k622rgb/groups.json` (respecting `XDG_CONFIG_HOME`;
-override with `--file` or `K622RGB_GROUP_FILE`).
+override with `--file` or `K622RGB_GROUP_FILE`). The `group` subcommands and
+`set --group` all honour the same override.
 
 Groups are also reusable overlays in `set`:
 
 ```bash
 ./bin/k622rgb set --group fps=ff0000 --group arrows=00ff00 Esc=ffffff
 ./bin/k622rgb set --all 0000ff --group moba=00ff00 Q=ffffff
+./bin/k622rgb set --file ~/alt-groups.json --group fps=ff0000 Esc=ffffff
 ```
 
 Precedence is: `--all`/`--off`/saved/device base, then `--group` layers in
