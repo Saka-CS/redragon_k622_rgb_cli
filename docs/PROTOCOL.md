@@ -200,8 +200,11 @@ payload, changes one byte (default `payload[0] = 1`), and sends it after the
 `09 cc` frame. The byte location is **not verified**: the vendor writer in
 `KeyboardDrv.exe` V1.6.6 zeroes the normal `09 d0` payload, and the live
 read-back does not match the captured latch hash. Use
-`--game-flag-offset`/`--game-flag-value` to probe it. The offset is a
-hypothesis, not a protocol constant.
+`--game-flag-offset`/`--game-flag-value` to probe it (offsets are decimal).
+A 2026-11-03 hardware matrix in Self-define (offsets `6`, `384`, `784`;
+values `0`, `1`, `255`; d0-only and cc+d0) found **no observable rendering or
+persistence effect**, so the single-byte game-flag hypothesis is unsupported.
+The offset remains a hypothesis, not a protocol constant.
 
 
 ### 6.1 Capture sequence
@@ -426,7 +429,7 @@ slots.
 | Write implementation (`set`, allowlist, state) | **Implemented; unit-tested** |
 | Hardware write test (`set Esc=red`) | **Confirmed:** Esc red, `1` green, `--off` clears |
 | Additive saved-frame behaviour | **Confirmed on hardware** |
-| `09 d0` companion | Not required for per-key colours; read-only except explicit restore and the experimental `set --game-flag` | Byte offset unverified |
+| `09 d0` companion | Not required for per-key colours; read-only except explicit restore and the experimental `set --game-flag` | Byte offset unverified; 2026-11-03 single-byte matrix showed no observable effect |
 | Read-back backup for report 6 | **Confirmed via mailbox** (`89 cc`); `set --from-device` uses it |
 | Config read/write (`83 c6` / `03 c6`) | **Confirmed:** 136-byte no-op round trip |
 | Effect palette (`88 c8` / `08 c8`) | **Confirmed:** 441-byte round trip |

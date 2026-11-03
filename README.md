@@ -99,9 +99,11 @@ leave the current effect running.
 
 The official app also uses the second custom table, the `09 d0` companion.
 `set --game-flag` reads the keyboard's current `09 d0` payload, changes one
-byte, and sends it after the `09 cc` frame. The byte location is **not yet
-verified**; the default is `payload[0] = 1`. The offset and value can be
-overridden to probe the field:
+byte, and sends it after the `09 cc` frame. The byte location is **unverified**,
+and the 2026-11-03 hardware matrix found **no observable effect** (see below);
+the default is `payload[0] = 1`. The offset and value can be overridden to
+probe the field. Offsets are decimal; the parser does not accept `0x`
+prefixes.
 
 ```bash
 ./bin/k622rgb set --game-flag Esc=red
@@ -111,8 +113,17 @@ overridden to probe the field:
 
 Every run backs up the config, palette and both custom frames before writing.
 Recover with `config restore --custom BACKUP`. This command is experimental:
-it does not change the default `set` behaviour, and the semantics of the byte
-are unknown until confirmed on hardware.
+it does not change the default `set` behaviour.
+
+**Hardware result (2026-11-03): no observable effect.** With the keyboard in
+Self-define (mode 21, per-key flag set) and a visibly confirmed solid-blue then
+solid-red baseline, single-byte `09 d0` writes at offsets `6`, `0x180`
+(decimal `384`) and `0x310` (decimal `784`), with values `0x00`, `0x01` and
+`0xFF`, changed nothing on screen. That held for d0-only writes (no `09 cc`)
+and for cc+d0 writes. The byte survived a normal `set`, a Rainbow →
+Self-define switch and a physical replug, but it did not alter rendering,
+persistence or group behaviour. Whether it affects key-press/game input was
+not tested. Treat `--game-flag` as a diagnostic, not a supported game mode.
 
 To exercise the feature automatically:
 

@@ -502,7 +502,7 @@ on the K622 produced the 5-second `ETIMEDOUT` that motivated this pivot.
 | Write implementation (`set`, allowlist, state) | **Implemented, unit-tested** | 163 tests; `--dry-run` |
 | Hardware write (`set Esc=red`) | **Confirmed** | Esc red; `1` green; `--off` clears |
 | Additive saved-frame behaviour | **Confirmed on hardware** | Second `set` kept the first colour |
-| `09 d0` / `03 c6` companions | **Not required for per-key colours** | Colour frame alone works; `03 c6` is used for mode config |
+| `09 d0` / `03 c6` companions | **Not required for per-key colours** | Colour frame alone works; `03 c6` is used for mode config; single-byte `09 d0` probe showed no observable effect (2026-11-03) |
 | Config read (`05 83 c6` → 136 B at response `0x08`) | **Confirmed** | Hardware read + no-op write round trip |
 | Effect palette (`05 88 c8` / `08 c8`, 441 B) | **Confirmed** | Hardware write/read round trip |
 | 20 effects + Self-define + OFF | **Confirmed** | Mode sweep on hardware + official UI under Wine 11 |
@@ -724,7 +724,9 @@ channel order.
   **21, Self-define**.
 - In that mode the app skips the plain per-key payload, sets the "game" flag in
   the `09 d0` packet, and sends `09 cc` + `09 d0` (`0x411659`/`0x4116a9`) —
-  the same opcodes `k622rgb` already uses.
+  the same opcodes `k622rgb` already uses. This is a static-analysis
+  inference; the hardware matrix below did not reproduce a single-byte game
+  flag.
 
 The feature therefore needs **no new protocol**. `k622rgb set` writes an
 equivalent `09 cc` per-key frame, and the firmware shows it in mode 21. The
@@ -739,7 +741,7 @@ not exercised in the captured paths.
 `group apply` / `set --group NAME=COLOR` generate the same `09 cc` frame. No
 `09 d0` write is needed.
 
-### The `09 d0` "game" byte (experimental, unverified)
+### The `09 d0` "game" byte (experimental, tested negative)
 
 The app's lighting routine has exactly one `09 cc`/`09 d0` writer
 (`0x445920`), called from `0x411150`. The `09 d0` payload is sourced from
@@ -768,7 +770,31 @@ experiment:
 - it backs up the config, palette, `09 cc` and `09 d0` tables first;
 - it prints the old/new byte and the resulting payload hash.
 
-The default offset is a hypothesis, not a confirmed protocol field. To test a
-different byte, pass `--game-flag-offset`; to clear it, pass
-`--game-flag-value 0`. Record the result here once the effect (or lack of one)
-is confirmed on hardware. Recovery is `config restore --custom BACKUP`.
+#### Hardware validation (2026-11-03)
+
+Conditions: mode 21 (Self-define) with the per-key flag set, confirmed by
+`mode show`; a visibly confirmed solid-blue baseline and a solid-red `09 cc`
+baseline; isolated XDG/state directories; a full config/palette/`09 cc`/`09 d0`
+backup before the first write.
+
+Tested, with a read-back and a repeat for each condition:
+
+- offsets `0` (default), `6`, `0x180` (decimal `384`) and `0x310` (decimal
+  `784`);
+- values `0x00`, `0x01` and `0xFF`, including writing `0xFF` into a zero byte;
+- d0-only writes (no `09 cc`) and cc+d0 writes;
+- a normal `set`, a Rainbow → Self-define switch, and a physical replug.
+
+Result: every write changed exactly the requested byte and nothing else, and
+`config restore --custom` restored all four tables byte-for-byte. **No visual,
+persistence or group difference was observed.** The mode and flag survived a
+normal `set`, a mode switch and a replug, but the display stayed the plain
+`09 cc` frame. Key-press/game-input behaviour was not tested, so this does not
+rule out a non-RGB meaning for the byte.
+
+The default offset remains a hypothesis, not a confirmed protocol field. To
+test a different byte, pass `--game-flag-offset`; to clear it, pass
+`--game-flag-value 0`. The 2026-11-03 matrix above found no observable effect,
+so the "single `09 d0` byte enables game mode" hypothesis is unsupported for
+RGB rendering. The feature is kept as a diagnostic. Recovery is
+`config restore --custom BACKUP`.

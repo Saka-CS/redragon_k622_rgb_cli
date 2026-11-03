@@ -21,6 +21,10 @@ Every run with ``--write`` takes a full config/palette/custom-frame backup
 first and restores the original ``09 d0`` payload on exit (including Ctrl-C).
 The keyboard may re-enumerate after a write; the script waits for it.
 
+A 2026-11-03 matrix in Self-define (offsets 6, 384, 784; values 0, 1, 255;
+d0-only and cc+d0) found no observable rendering, persistence or group effect.
+Keep this script as a diagnostic; game-input behaviour is still untested.
+
 Suggested things to look at after each write:
 
 * Does the current lighting change or switch to the stored per-key frame?
