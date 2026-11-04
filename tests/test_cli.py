@@ -56,6 +56,7 @@ class CliTests(unittest.TestCase):
         open_error=None,
         write_error=None,
         backup_error=None,
+        backup_return=None,
     ):
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -87,7 +88,11 @@ class CliTests(unittest.TestCase):
             self.backup = stack.enter_context(
                 mock.patch(
                     "k622rgb.cli._save_lighting_backup",
-                    return_value=str(self.root / "backup"),
+                    return_value=(
+                        backup_return
+                        if backup_return is not None
+                        else str(self.root / "backup")
+                    ),
                     side_effect=backup_error,
                 )
             )
@@ -769,6 +774,467 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(set(files), expected)
         self.assertEqual(files["config-response.bin"], config_response)
+
+    # -- config restore --------------------------------------------------
+
+    def make_config_block(self):
+        config = bytearray(controller.CONFIG_SIZE)
+        config[0x08:0x0A] = b"\x03\x03"
+        config[
+            controller.CONFIG_TRAILER_INDEX:
+            controller.CONFIG_TRAILER_INDEX + 2
+        ] = controller.CONFIG_TRAILER
+        return bytes(config)
+
+    def make_restore_backup(
+        self, name="restore-backup", verified=True, descriptor=None,
+        custom=True,
+    ):
+        path = self.root / name
+        path.mkdir()
+        files = {
+            "config-response.bin": bytes(8) + self.make_config_block(),
+            "colors-response.bin": bytes(8) + bytes(controller.COLOR_TABLE_SIZE),
+        }
+        if custom:
+            files["custom1-response.bin"] = bytes(8) + b"\x11" * 1024
+            files["custom2-response.bin"] = bytes(8) + b"\x22" * 1024
+        for filename, data in files.items():
+            (path / filename).write_bytes(data)
+        meta = {
+            "kind": "config dump",
+            "descriptor_sha256": (
+                descriptor
+                if descriptor is not None
+                else controller.K622_DESCRIPTOR_SHA256
+            ),
+            "created": "2026-01-01T00:00:00Z",
+            "tool": "k622rgb test",
+        }
+        if verified:
+            meta["version"] = 2
+            meta["files"] = state.files_manifest(files)
+        (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        return path, files, meta
+
+    def run_restore(
+        self,
+        argv,
+        backup_return=None,
+        write_palette_effect=None,
+        write_config_effect=None,
+        write_custom_effect=None,
+        read_custom_return=None,
+        read_custom_side_effect=None,
+    ):
+        with mock.patch(
+            "k622rgb.cli.controller.write_effect_palette",
+            side_effect=write_palette_effect,
+        ) as write_palette, mock.patch(
+            "k622rgb.cli.controller.write_config",
+            side_effect=write_config_effect,
+        ) as write_config, mock.patch(
+            "k622rgb.cli.controller.write_custom_frame",
+            side_effect=write_custom_effect,
+        ) as write_custom, mock.patch(
+            "k622rgb.cli.controller.read_custom_frame",
+            return_value=read_custom_return,
+            side_effect=read_custom_side_effect,
+        ) as read_custom, mock.patch(
+            "k622rgb.cli.time.sleep"
+        ), mock.patch(
+            "k622rgb.cli.os.close"
+        ):
+            code, out, err, opener, _reader, _writer = self.run_cli(
+                argv, backup_return=backup_return
+            )
+        return {
+            "code": code,
+            "out": out,
+            "err": err,
+            "opener": opener,
+            "write_palette": write_palette,
+            "write_config": write_config,
+            "write_custom": write_custom,
+            "read_custom": read_custom,
+        }
+
+    def test_config_restore_custom_requires_manifest(self):
+        path, _files, _meta = self.make_restore_backup(verified=False)
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)]
+        )
+
+        self.assertEqual(result["code"], 2)
+        self.assertIn("manifest", result["err"])
+        self.assertIn("--allow-unverified", result["err"])
+        result["opener"].assert_not_called()
+
+    def test_config_restore_custom_rejects_hash_mismatch(self):
+        path, _files, _meta = self.make_restore_backup()
+        (path / "custom2-response.bin").write_bytes(
+            bytes(8) + b"\x33" * 1024
+        )
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)]
+        )
+
+        self.assertEqual(result["code"], 2)
+        self.assertIn("sha256 mismatch", result["err"])
+        result["opener"].assert_not_called()
+
+    def test_config_restore_custom_rejects_descriptor_mismatch(self):
+        path, _files, _meta = self.make_restore_backup(descriptor="0" * 64)
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)]
+        )
+
+        self.assertEqual(result["code"], 1)
+        self.assertIn("descriptor", result["err"])
+        result["opener"].assert_called_once_with(self.node, writable=True)
+        result["write_palette"].assert_not_called()
+        result["write_config"].assert_not_called()
+        result["write_custom"].assert_not_called()
+
+    def test_config_restore_custom_requires_descriptor(self):
+        path, files, meta = self.make_restore_backup()
+        del meta["descriptor_sha256"]
+        (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)]
+        )
+
+        self.assertEqual(result["code"], 2)
+        self.assertIn("descriptor_sha256", result["err"])
+        result["opener"].assert_not_called()
+
+    def test_config_restore_custom_requires_yes(self):
+        path, _files, _meta = self.make_restore_backup()
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", str(path)]
+        )
+
+        self.assertEqual(result["code"], 2)
+        self.assertIn("refusing to write 09 d0 without --yes", result["err"])
+        self.assertIn("%s --yes" % path, result["err"])
+        self.assertIn("custom2-response.bin", result["out"])
+        result["opener"].assert_not_called()
+
+    def test_config_restore_custom_rejects_no_backup(self):
+        path, _files, _meta = self.make_restore_backup()
+
+        result = self.run_restore(
+            [
+                "config", "restore", "--custom", "--yes", "--no-backup",
+                str(path),
+            ]
+        )
+
+        self.assertEqual(result["code"], 2)
+        self.assertIn("--no-backup", result["err"])
+        self.assertIn("09 d0", result["err"])
+        result["opener"].assert_not_called()
+
+    def test_config_restore_custom_prebackup_includes_custom_frames(self):
+        config_response = bytes(8) + self.make_config_block()
+        palette_response = bytes(8) + bytes(controller.COLOR_TABLE_SIZE)
+        custom1 = bytes(8) + b"\xaa" * 1024
+        custom2 = bytes(8) + b"\xbb" * 1024
+        descriptor = FIXTURE.read_bytes()
+
+        with mock.patch.dict(
+            os.environ, {"XDG_STATE_HOME": str(self.root / "state")}
+        ), mock.patch(
+            "k622rgb.cli.controller.read_config_response",
+            return_value=config_response,
+        ), mock.patch(
+            "k622rgb.cli.controller.mailbox_read",
+            side_effect=[palette_response, custom1, custom2],
+        ):
+            path = cli._save_lighting_backup(
+                -1, descriptor, "restore", custom=True
+            )
+
+        meta, files = state.verify_backup_dir(
+            path,
+            required=("custom1-response.bin", "custom2-response.bin"),
+            descriptor_sha256=controller.descriptor_sha256(descriptor),
+        )
+        self.assertEqual(meta["kind"], "restore")
+        self.assertEqual(files["custom1-response.bin"], custom1)
+        self.assertEqual(files["custom2-response.bin"], custom2)
+
+    def test_config_restore_writes_d0_last(self):
+        path, files, _meta = self.make_restore_backup()
+        order = []
+
+        def write_palette(_fd, _palette):
+            order.append("palette")
+
+        def write_config(_fd, _config):
+            order.append("config")
+
+        def write_custom(_fd, _payload, which):
+            order.append("custom%d" % which)
+
+        expected = files["custom2-response.bin"][8:]
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)],
+            backup_return=str(self.root / "prebackup"),
+            write_palette_effect=write_palette,
+            write_config_effect=write_config,
+            write_custom_effect=write_custom,
+            read_custom_return=expected,
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(order, ["palette", "config", "custom1", "custom2"])
+        self.assertIn("restored:", result["out"])
+
+    def test_config_restore_readback_mismatch_rolls_back(self):
+        path, _files, _meta = self.make_restore_backup()
+        prebackup = self.root / "prebackup"
+        prebackup.mkdir()
+        rollback_payload = b"\xaa" * 1024
+        (prebackup / "custom2-response.bin").write_bytes(
+            bytes(8) + rollback_payload
+        )
+        d0_payloads = []
+
+        def write_custom(_fd, payload, which):
+            if which == 2:
+                d0_payloads.append(payload)
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)],
+            backup_return=str(prebackup),
+            write_custom_effect=write_custom,
+            read_custom_side_effect=[b"\x00" * 1024, rollback_payload],
+        )
+
+        self.assertEqual(result["code"], 1)
+        self.assertEqual(len(d0_payloads), 2)
+        self.assertEqual(d0_payloads[0], b"\x22" * 1024)
+        self.assertEqual(d0_payloads[1], rollback_payload)
+        self.assertEqual(result["read_custom"].call_count, 2)
+        self.assertIn("rolled back", result["err"])
+        self.assertIn("not rolled back", result["err"])
+        self.assertIn("To return fully", result["err"])
+        self.assertNotIn("original state recovered", result["err"])
+
+    def test_config_restore_epipe_stops_without_retry(self):
+        path, _files, _meta = self.make_restore_backup()
+        calls = []
+
+        def write_custom(_fd, _payload, which):
+            calls.append(which)
+            raise controller.DeviceError("broken pipe (EPIPE)")
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)],
+            backup_return=str(self.root / "prebackup"),
+            write_custom_effect=write_custom,
+        )
+
+        self.assertEqual(result["code"], 1)
+        self.assertEqual(calls, [1])
+        self.assertEqual(result["write_custom"].call_count, 1)
+        self.assertEqual(result["write_config"].call_count, 1)
+        self.assertIn("broken pipe", result["err"])
+        self.assertIn("pre-restore backup", result["err"])
+        self.assertIn("before the 09 d0 write", result["err"])
+        self.assertNotIn("did not respond after the 09 d0", result["err"])
+        result["read_custom"].assert_not_called()
+
+    def test_config_restore_epipe_on_d0_prints_recovery(self):
+        path, _files, _meta = self.make_restore_backup()
+        calls = []
+
+        def write_custom(_fd, _payload, which):
+            calls.append(which)
+            if which == 2:
+                raise controller.DeviceError("broken pipe (EPIPE)")
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)],
+            backup_return=str(self.root / "prebackup"),
+            write_custom_effect=write_custom,
+        )
+
+        self.assertEqual(result["code"], 1)
+        self.assertEqual(calls, [1, 2])
+        self.assertIn("did not respond after the 09 d0", result["err"])
+        self.assertIn("docs/SAFETY.md", result["err"])
+        result["read_custom"].assert_not_called()
+
+    def test_config_restore_readback_failure_does_not_rollback(self):
+        path, _files, _meta = self.make_restore_backup()
+        d0_payloads = []
+
+        def write_custom(_fd, payload, which):
+            if which == 2:
+                d0_payloads.append(payload)
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)],
+            backup_return=str(self.root / "prebackup"),
+            write_custom_effect=write_custom,
+            read_custom_side_effect=controller.DeviceError("read failed"),
+        )
+
+        self.assertEqual(result["code"], 1)
+        self.assertEqual(len(d0_payloads), 1)
+        self.assertEqual(result["read_custom"].call_count, 1)
+        self.assertIn("read-back failed", result["err"])
+        self.assertIn("docs/SAFETY.md", result["err"])
+
+    def test_config_restore_interrupt_stops_without_further_writes(self):
+        path, _files, _meta = self.make_restore_backup()
+        calls = []
+
+        def write_custom(_fd, _payload, which):
+            calls.append(which)
+            raise KeyboardInterrupt
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)],
+            backup_return=str(self.root / "prebackup"),
+            write_custom_effect=write_custom,
+        )
+
+        self.assertEqual(result["code"], 130)
+        self.assertEqual(calls, [1])
+        self.assertIn("interrupted", result["err"])
+        result["read_custom"].assert_not_called()
+
+    def test_config_restore_verify_only_does_not_open_device(self):
+        path, files, _meta = self.make_restore_backup()
+
+        result = self.run_restore(
+            ["config", "restore", "--verify-only", str(path)]
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertIn("kind: config dump", result["out"])
+        self.assertIn("created: 2026-01-01T00:00:00Z", result["out"])
+        self.assertIn(
+            "descriptor: %s" % controller.K622_DESCRIPTOR_SHA256,
+            result["out"],
+        )
+        self.assertIn("config-response.bin", result["out"])
+        self.assertIn("verified: 4 files", result["out"])
+        self.assertIn(
+            state.files_manifest(files)["config-response.bin"]["sha256"],
+            result["out"],
+        )
+        result["opener"].assert_not_called()
+
+    def test_config_restore_verify_only_legacy_reports_unverified(self):
+        path, _files, _meta = self.make_restore_backup(verified=False)
+
+        result = self.run_restore(
+            ["config", "restore", "--verify-only", str(path)]
+        )
+
+        self.assertEqual(result["code"], 1)
+        self.assertIn("unverified", result["out"])
+        self.assertIn("contents cannot be verified", result["err"])
+        result["opener"].assert_not_called()
+
+    def test_config_restore_verify_only_custom_requires_descriptor(self):
+        path, _files, meta = self.make_restore_backup()
+        del meta["descriptor_sha256"]
+        (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--verify-only", str(path)]
+        )
+
+        self.assertEqual(result["code"], 1)
+        self.assertIn("descriptor_sha256", result["err"])
+        result["opener"].assert_not_called()
+
+    def test_config_restore_verify_only_allow_unverified(self):
+        path, _files, _meta = self.make_restore_backup(verified=False)
+
+        result = self.run_restore(
+            [
+                "config", "restore", "--verify-only", "--allow-unverified",
+                str(path),
+            ]
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertIn("unverified", result["out"])
+        self.assertIn("--allow-unverified was given", result["err"])
+        result["opener"].assert_not_called()
+
+    def test_config_restore_allow_unverified_legacy_custom(self):
+        path, files, _meta = self.make_restore_backup(verified=False)
+        expected = files["custom2-response.bin"][8:]
+
+        result = self.run_restore(
+            [
+                "config", "restore", "--custom", "--yes",
+                "--allow-unverified", str(path),
+            ],
+            backup_return=str(self.root / "prebackup"),
+            read_custom_return=expected,
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertIn("legacy backup has no hashes", result["err"])
+        self.assertEqual(result["write_custom"].call_count, 2)
+        self.assertIn("restored:", result["out"])
+
+    def test_config_restore_custom_accepts_verified_backup(self):
+        path, files, _meta = self.make_restore_backup()
+        expected = files["custom2-response.bin"][8:]
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)],
+            backup_return=str(self.root / "prebackup"),
+            read_custom_return=expected,
+        )
+
+        self.assertEqual(result["code"], 0)
+        self.assertIn("restored: %s" % path, result["out"])
+        self.assertEqual(result["write_custom"].call_count, 2)
+        self.assertEqual(
+            result["write_custom"].call_args_list[0].args[2], 1
+        )
+        self.assertEqual(
+            result["write_custom"].call_args_list[1].args[2], 2
+        )
+
+    def test_config_restore_plain_directory_still_works(self):
+        path, _files, _meta = self.make_restore_backup(
+            name="plain-backup", custom=False
+        )
+
+        result = self.run_restore(["config", "restore", str(path)])
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(result["write_config"].call_count, 1)
+        result["write_custom"].assert_not_called()
+        self.assertIn("restored: %s" % path, result["out"])
+
+    def test_config_restore_plain_single_file_still_works(self):
+        path = self.root / "config.bin"
+        path.write_bytes(self.make_config_block())
+
+        result = self.run_restore(["config", "restore", str(path)])
+
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(result["write_config"].call_count, 1)
+        result["write_palette"].assert_not_called()
+        result["write_custom"].assert_not_called()
+        self.assertIn("restored: %s" % path, result["out"])
 
     # -- argparse --------------------------------------------------------
 

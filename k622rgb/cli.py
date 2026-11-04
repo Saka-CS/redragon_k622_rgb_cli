@@ -24,6 +24,7 @@ captured from the official K622 software.
 """
 
 import argparse
+import hashlib
 import os
 import stat
 import sys
@@ -508,12 +509,33 @@ def build_parser() -> argparse.ArgumentParser:
     config_restore.add_argument(
         "--custom",
         action="store_true",
-        help="also restore the two custom per-key frames if present",
+        help=(
+            "also restore both custom per-key frames (requires a verified "
+            "backup and --yes; writes 09 d0 last)"
+        ),
     )
     config_restore.add_argument(
         "--no-backup",
         action="store_true",
-        help="do not back up the current state before restoring",
+        help=(
+            "do not back up the current state before restoring "
+            "(not allowed with --custom)"
+        ),
+    )
+    config_restore.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="validate the backup manifest and exit without opening the device",
+    )
+    config_restore.add_argument(
+        "--yes",
+        action="store_true",
+        help="confirm a --custom 09 d0 write",
+    )
+    config_restore.add_argument(
+        "--allow-unverified",
+        action="store_true",
+        help="accept a legacy backup without a file manifest (loud warning)",
     )
     config_restore.set_defaults(func=cmd_config_restore)
 
@@ -1364,8 +1386,12 @@ def _open_mailbox(args: argparse.Namespace):
 
 
 def _save_lighting_backup(fd, data, note, config_response=None,
-                          palette_response=None, profile=False):
-    """Read (if needed) and persist a full lighting backup."""
+                          palette_response=None, profile=False, custom=False):
+    """Read (if needed) and persist a full lighting backup.
+
+    ``custom=True`` also captures both custom per-key frames so the backup can
+    be used to roll back a ``09 d0`` restore.
+    """
     if config_response is None:
         config_response = controller.read_config_response(fd)
     if palette_response is None:
@@ -1376,6 +1402,13 @@ def _save_lighting_backup(fd, data, note, config_response=None,
         "config-response.bin": config_response,
         "colors-response.bin": palette_response,
     }
+    if custom:
+        files["custom1-response.bin"] = controller.mailbox_read(
+            fd, controller.CUSTOM1_READ_COMMAND
+        )
+        files["custom2-response.bin"] = controller.mailbox_read(
+            fd, controller.CUSTOM2_READ_COMMAND
+        )
     if profile:
         files["profile-response.bin"] = controller.mailbox_read(
             fd, controller.PROFILE_READ_COMMAND
@@ -1857,61 +1890,437 @@ def _palette_from_any(data: bytes) -> bytes:
     )
 
 
+CUSTOM_RESTORE_FILES = (
+    "config-response.bin",
+    "colors-response.bin",
+    "custom1-response.bin",
+    "custom2-response.bin",
+)
+
+
+def _restore_usage(message: str) -> int:
+    print("k622rgb: %s" % message, file=sys.stderr)
+    return EXIT_USAGE
+
+
+def _print_recovery(pre_backup: Optional[str]) -> None:
+    """Print the recovery ladder for a failed ``09 d0`` restore."""
+    print(
+        "The keyboard did not respond after the 09 d0 restore.",
+        file=sys.stderr,
+    )
+    if pre_backup:
+        print("pre-restore backup: %s" % pre_backup, file=sys.stderr)
+        print(
+            "1. Run: ./bin/k622rgb config restore --custom %s --yes"
+            % pre_backup,
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "1. Run: ./bin/k622rgb config restore --custom "
+            "<pre-restore-backup> --yes",
+            file=sys.stderr,
+        )
+    print(
+        "2. If the device no longer appears in `lsusb`, this tool cannot "
+        "restore it.",
+        file=sys.stderr,
+    )
+    print(
+        "   See docs/SAFETY.md for recovery. Do not flash K621 firmware.",
+        file=sys.stderr,
+    )
+
+
+def _rollback_custom2(fd, pre_backup: Optional[str]) -> bool:
+    """Attempt exactly one rollback of custom frame 2 from the backup."""
+    if not pre_backup:
+        print(
+            "k622rgb: no pre-restore backup is available for rollback",
+            file=sys.stderr,
+        )
+        return False
+    rollback_path = os.path.join(pre_backup, "custom2-response.bin")
+    try:
+        with open(rollback_path, "rb") as handle:
+            response = handle.read()
+        payload = controller.payload_from_response(
+            response, controller.CUSTOM_PAYLOAD_SIZE
+        )
+    except (OSError, controller.ProtocolError) as exc:
+        print(
+            "k622rgb: cannot read rollback data from %s: %s"
+            % (rollback_path, exc),
+            file=sys.stderr,
+        )
+        return False
+
+    try:
+        controller.write_custom_frame(fd, payload, 2)
+        time.sleep(0.05)
+        actual = controller.read_custom_frame(fd, 2)
+    except (controller.DeviceError, OSError) as exc:
+        print(
+            "k622rgb: custom frame 2 rollback failed: %s" % exc,
+            file=sys.stderr,
+        )
+        return False
+    if actual != payload:
+        print(
+            "k622rgb: custom frame 2 rollback read-back mismatch",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def _verify_backup_only(args: argparse.Namespace) -> int:
+    """Validate a backup without opening the device."""
+    path = os.path.expanduser(args.path)
+    if not os.path.isdir(path):
+        return _restore_usage(
+            "--verify-only requires a backup directory, not %s" % path
+        )
+    try:
+        meta, files = state.read_backup_dir(path)
+    except state.BackupError as exc:
+        return _restore_usage(str(exc))
+
+    print("backup: %s" % path)
+    print("kind: %s" % meta.get("kind", "unknown"))
+    print("created: %s" % meta.get("created", "unknown"))
+    print("descriptor: %s" % meta.get("descriptor_sha256", "none"))
+
+    required = CUSTOM_RESTORE_FILES if args.custom else ()
+    missing = [name for name in required if name not in files]
+    if missing:
+        return _restore_usage(
+            "backup is missing required file(s): %s" % ", ".join(missing)
+        )
+    if args.custom and not meta.get("descriptor_sha256"):
+        print(
+            "k622rgb: backup has no descriptor_sha256; a --custom restore "
+            "cannot be tied to this device",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    if "files" not in meta:
+        for name in sorted(files):
+            data = files[name]
+            print(
+                "  %-24s %6d bytes  %s  unverified"
+                % (name, len(data), hashlib.sha256(data).hexdigest())
+            )
+        print(
+            "warning: legacy backup has no hashes; contents cannot be verified",
+            file=sys.stderr,
+        )
+        if args.allow_unverified:
+            print(
+                "warning: accepting an unverified legacy backup because "
+                "--allow-unverified was given",
+                file=sys.stderr,
+            )
+            print("unverified: %s" % path)
+            return EXIT_OK
+        print("unverified: %s" % path, file=sys.stderr)
+        return EXIT_ERROR
+
+    try:
+        _meta, files = state.verify_backup_dir(path, required=required)
+    except state.BackupError as exc:
+        print("k622rgb: verification failed: %s" % exc, file=sys.stderr)
+        return EXIT_ERROR
+    for name in sorted(files):
+        data = files[name]
+        print(
+            "  %-24s %6d bytes  %s"
+            % (name, len(data), hashlib.sha256(data).hexdigest())
+        )
+    print("verified: %d files" % len(files))
+    return EXIT_OK
+
+
 def cmd_config_restore(args: argparse.Namespace) -> int:
     path = os.path.expanduser(args.path)
-    if os.path.isdir(path):
-        config_data = _read_backup_file(
-            path, ["config-response.bin", "config.bin"]
-        )
-        palette_data = _read_backup_file(
-            path, ["colors-response.bin", "colors.bin"]
-        )
-        custom1 = _read_backup_file(path, ["custom1-response.bin"]) if args.custom else None
-        custom2 = _read_backup_file(path, ["custom2-response.bin"]) if args.custom else None
+
+    if args.verify_only:
+        return _verify_backup_only(args)
+
+    if args.custom:
+        if not os.path.isdir(path):
+            return _restore_usage(
+                "--custom requires a backup directory, not a single file: %s"
+                % path
+            )
+        if args.no_backup:
+            return _restore_usage(
+                "refusing to write 09 d0 without a pre-restore backup; "
+                "--no-backup is not allowed with --custom"
+            )
+        try:
+            meta, files = state.read_backup_dir(path)
+        except state.BackupError as exc:
+            return _restore_usage(str(exc))
+        if "files" not in meta:
+            if not args.allow_unverified:
+                return _restore_usage(
+                    "backup %s has no file manifest (legacy backup); its "
+                    "contents cannot be verified. Re-run with "
+                    "--allow-unverified to accept it." % path
+                )
+            print(
+                "warning: legacy backup has no hashes; contents cannot be "
+                "verified",
+                file=sys.stderr,
+            )
+        else:
+            try:
+                meta, files = state.verify_backup_dir(
+                    path, required=CUSTOM_RESTORE_FILES
+                )
+            except state.BackupError as exc:
+                return _restore_usage(str(exc))
+        missing = [name for name in CUSTOM_RESTORE_FILES if name not in files]
+        if missing:
+            return _restore_usage(
+                "backup is missing required file(s): %s" % ", ".join(missing)
+            )
+        if not meta.get("descriptor_sha256"):
+            return _restore_usage(
+                "backup %s has no descriptor_sha256; refusing --custom "
+                "because the backup cannot be tied to this device" % path
+            )
+        config_data = files["config-response.bin"]
+        palette_data = files["colors-response.bin"]
+        custom1 = files["custom1-response.bin"]
+        custom2 = files["custom2-response.bin"]
     else:
-        with open(path, "rb") as handle:
-            config_data = handle.read()
-        palette_data = None
-        custom1 = custom2 = None
-    if config_data is None:
-        raise ValueError("no config-response.bin or config.bin in %s" % path)
-    config = _config_from_any(config_data)
-    controller.validate_config(config)
-    palette = _palette_from_any(palette_data) if palette_data is not None else None
+        meta = None
+        if os.path.isdir(path):
+            meta_path = os.path.join(path, "meta.json")
+            if os.path.exists(meta_path):
+                try:
+                    meta, _manifest_files = state.read_backup_dir(path)
+                except state.BackupError as exc:
+                    return _restore_usage(str(exc))
+                if "files" in meta:
+                    try:
+                        meta, _manifest_files = state.verify_backup_dir(path)
+                    except state.BackupError as exc:
+                        return _restore_usage(str(exc))
+            try:
+                config_data = _read_backup_file(
+                    path, ["config-response.bin", "config.bin"]
+                )
+                palette_data = _read_backup_file(
+                    path, ["colors-response.bin", "colors.bin"]
+                )
+            except OSError as exc:
+                return _restore_usage(
+                    "cannot read backup %s: %s"
+                    % (path, exc.strerror or exc)
+                )
+            custom1 = custom2 = None
+        else:
+            try:
+                with open(path, "rb") as handle:
+                    config_data = handle.read()
+            except OSError as exc:
+                return _restore_usage(
+                    "cannot read config file %s: %s"
+                    % (path, exc.strerror or exc)
+                )
+            palette_data = None
+            custom1 = custom2 = None
+        if config_data is None:
+            return _restore_usage(
+                "no config-response.bin or config.bin in %s" % path
+            )
+
+    try:
+        config = _config_from_any(config_data)
+        controller.validate_config(config)
+        palette = (
+            _palette_from_any(palette_data)
+            if palette_data is not None
+            else None
+        )
+        if args.custom:
+            custom1_payload = controller.payload_from_response(
+                custom1, controller.CUSTOM_PAYLOAD_SIZE
+            )
+            custom2_payload = controller.payload_from_response(
+                custom2, controller.CUSTOM_PAYLOAD_SIZE
+            )
+    except (ValueError, controller.ProtocolError) as exc:
+        return _restore_usage(str(exc))
 
     if args.dry_run:
         print("dry run: would restore config from %s" % path)
         if palette is not None:
             print("dry run: would restore the effect palette")
-        if custom1 is not None:
-            print("dry run: would restore custom frame 1")
-        if custom2 is not None:
-            print("dry run: would restore custom frame 2")
+        if args.custom:
+            print(
+                "dry run: write order would be palette, config, "
+                "custom frame 1 (09 cc), custom frame 2 (09 d0) last"
+            )
         return EXIT_OK
 
+    if args.custom and not args.yes:
+        print("would restore from %s:" % path)
+        print("  palette: colors-response.bin")
+        print("  config: config-response.bin")
+        print("  custom frame 1 (09 cc): custom1-response.bin")
+        print("  custom frame 2 (09 d0, written last): custom2-response.bin")
+        print(
+            "k622rgb: refusing to write 09 d0 without --yes",
+            file=sys.stderr,
+        )
+        print(
+            "to proceed, run:\n"
+            "  ./bin/k622rgb config restore --custom %s --yes" % path,
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
     fd, node, data = _open_mailbox(args)
+    pre_backup = None
     try:
+        expected_descriptor = (
+            meta.get("descriptor_sha256") if meta is not None else None
+        )
+        if expected_descriptor is not None:
+            actual_descriptor = controller.descriptor_sha256(data)
+            if expected_descriptor != actual_descriptor:
+                print(
+                    "k622rgb: backup descriptor sha256 %s does not match "
+                    "this device (%s); refusing to restore."
+                    % (expected_descriptor, actual_descriptor),
+                    file=sys.stderr,
+                )
+                return EXIT_ERROR
+
         if not args.no_backup:
-            backup = _save_lighting_backup(fd, data, "restore")
-            print("backup: %s" % backup)
-        if palette is not None:
-            controller.write_effect_palette(fd, palette)
-        if custom1 is not None:
-            time.sleep(0.05)
-            controller.write_custom_frame(
-                fd,
-                controller.payload_from_response(custom1, controller.CUSTOM_PAYLOAD_SIZE),
-                1,
+            pre_backup = _save_lighting_backup(
+                fd, data, "restore", custom=args.custom
             )
-        if custom2 is not None:
-            time.sleep(0.05)
-            controller.write_custom_frame(
-                fd,
-                controller.payload_from_response(custom2, controller.CUSTOM_PAYLOAD_SIZE),
-                2,
+            print("backup: %s" % pre_backup)
+
+        d0_attempted = False
+        try:
+            if palette is not None:
+                controller.write_effect_palette(fd, palette)
+            if args.custom:
+                time.sleep(0.05)
+                controller.write_config(fd, config)
+                time.sleep(0.05)
+                controller.write_custom_frame(fd, custom1_payload, 1)
+                time.sleep(0.05)
+                d0_attempted = True
+                controller.write_custom_frame(fd, custom2_payload, 2)
+                time.sleep(0.05)
+                try:
+                    actual_custom2 = controller.read_custom_frame(fd, 2)
+                except (controller.DeviceError, OSError) as exc:
+                    print(
+                        "k622rgb: custom frame 2 read-back failed: %s" % exc,
+                        file=sys.stderr,
+                    )
+                    _print_recovery(pre_backup)
+                    return EXIT_ERROR
+                if actual_custom2 != custom2_payload:
+                    print(
+                        "k622rgb: custom frame 2 read-back mismatch; "
+                        "attempting one rollback",
+                        file=sys.stderr,
+                    )
+                    if _rollback_custom2(fd, pre_backup):
+                        print(
+                            "k622rgb: custom frame 2 was rolled back to the "
+                            "pre-restore backup.",
+                            file=sys.stderr,
+                        )
+                        print(
+                            "warning: palette, config and custom frame 1 were "
+                            "already written and were not rolled back.",
+                            file=sys.stderr,
+                        )
+                        print(
+                            "To return fully to the previous state, run:\n"
+                            "  ./bin/k622rgb config restore --custom %s --yes"
+                            % pre_backup,
+                            file=sys.stderr,
+                        )
+                    else:
+                        _print_recovery(pre_backup)
+                    return EXIT_ERROR
+            else:
+                if palette is not None:
+                    time.sleep(0.05)
+                controller.write_config(fd, config)
+        except KeyboardInterrupt:
+            print(
+                "k622rgb: interrupted during restore",
+                file=sys.stderr,
             )
-        time.sleep(0.05)
-        controller.write_config(fd, config)
+            if pre_backup:
+                print("pre-restore backup: %s" % pre_backup, file=sys.stderr)
+            if args.custom and d0_attempted:
+                _print_recovery(pre_backup)
+            elif args.custom:
+                print(
+                    "k622rgb: restore was interrupted before the 09 d0 write; "
+                    "palette, config and custom frame 1 may already have "
+                    "changed.",
+                    file=sys.stderr,
+                )
+                if pre_backup:
+                    print(
+                        "to return to the previous state, run:\n"
+                        "  ./bin/k622rgb config restore --custom %s --yes"
+                        % pre_backup,
+                        file=sys.stderr,
+                    )
+            else:
+                print(
+                    "k622rgb: restore did not complete; re-run "
+                    "`config restore <pre-restore-backup>` if needed.",
+                    file=sys.stderr,
+                )
+            return EXIT_INTERRUPTED
+        except (controller.DeviceError, OSError) as exc:
+            print(
+                "k622rgb: restore write failed: %s" % exc,
+                file=sys.stderr,
+            )
+            if pre_backup:
+                print("pre-restore backup: %s" % pre_backup, file=sys.stderr)
+            if args.custom and d0_attempted:
+                _print_recovery(pre_backup)
+            elif args.custom:
+                print(
+                    "k622rgb: restore failed before the 09 d0 write; "
+                    "palette, config and custom frame 1 may already have "
+                    "changed.",
+                    file=sys.stderr,
+                )
+                if pre_backup:
+                    print(
+                        "to return to the previous state, run:\n"
+                        "  ./bin/k622rgb config restore --custom %s --yes"
+                        % pre_backup,
+                        file=sys.stderr,
+                    )
+            else:
+                print(
+                    "k622rgb: restore did not complete; re-run "
+                    "`config restore <pre-restore-backup>` if needed.",
+                    file=sys.stderr,
+                )
+            return EXIT_ERROR
     finally:
         os.close(fd)
     print("device: %s" % node)
