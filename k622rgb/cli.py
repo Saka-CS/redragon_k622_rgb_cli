@@ -5,6 +5,7 @@ Read-only commands:
 * ``info``    — resolve the device and print its HID report descriptor.
 * ``dump``    — issue ``HIDIOCGFEATURE`` for report 0x05 or 0x06.
 * ``check``   — verify discovery, permissions and the descriptor hash.
+* ``doctor``  — report device/backup state and the recovery ladder.
 * ``list``    — show the packet-slot map: keys, logo zones, aliases and dead slots.
 
 Lighting commands:
@@ -204,6 +205,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_global_flags(check, suppress_defaults=True)
     check.set_defaults(func=cmd_check)
+
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="report device, backups and the recovery ladder (read-only)",
+        description=(
+            "Report whether a K622 is present, the descriptor hash, the state "
+            "and backup directories, the five most recent backups, and the "
+            "safe recovery ladder. Never opens the device for writing and "
+            "never creates or changes local state; it works without a device."
+        ),
+    )
+    _add_global_flags(doctor, suppress_defaults=True)
+    doctor.set_defaults(func=cmd_doctor)
 
     set_parser = subparsers.add_parser(
         "set",
@@ -772,6 +786,141 @@ def cmd_info(args: argparse.Namespace) -> int:
             "descriptor. Do not trust writes on this firmware until reviewed.",
             file=sys.stderr,
         )
+    return EXIT_OK
+
+
+DOCTOR_BACKUP_LIMIT = 5
+
+
+def _doctor_backup_meta(path: str) -> Optional[Dict]:
+    """Read ``meta.json`` without failing doctor on a broken backup."""
+    import json
+
+    meta_path = os.path.join(path, "meta.json")
+    try:
+        with open(meta_path, "r", encoding="utf-8") as handle:
+            meta = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
+def _print_doctor_device(info: controller.DeviceInfo) -> None:
+    print("device: %s" % info.node)
+    interface = info.interface if info.interface is not None else "?"
+    print(
+        "interface: %s%s"
+        % (
+            interface,
+            " (IF1 control)" if info.interface == controller.CONTROL_INTERFACE else "",
+        )
+    )
+    print("sysfs: %s" % info.sysfs)
+    try:
+        descriptor = controller.load_descriptor(info.sysfs)
+    except controller.DeviceError as exc:
+        print("descriptor sha256: unavailable (%s)" % exc)
+        return
+    print("descriptor sha256: %s" % controller.descriptor_sha256(descriptor))
+    print("descriptor: %s" % _descriptor_label(descriptor))
+
+
+def _print_doctor_recovery() -> None:
+    print("safe recovery ladder (try these in order):")
+    print("  1. Try a different USB-C data cable, port, and both connector orientations.")
+    print("  2. Press Fn+Esc on the keyboard to reset it.")
+    print("  3. App-level restore only if the device enumerates:")
+    print("       ./bin/k622rgb config restore --custom <verified-backup> --yes")
+    print("  4. Sinowealth ISP / Arduino recovery:")
+    print("       gashtaan/sinowealth-fw-disabler + sinowisp")
+    print("  5. Official K622 updater (Update_KB_K622RGB.exe) + the matching .hex;")
+    print("       the US/UK/ABNT2 layout must match the board.")
+    print("  6. Redragon RMA/support: support@redragonshop.com")
+    print()
+    print("warning: do not flash K621 firmware onto a K622; it is model-specific")
+    print("         and can break keys/LEDs.")
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    print("k622rgb doctor (read-only; no device writes)")
+    print()
+    print("device:")
+    try:
+        candidates = controller.iter_devices()
+    except controller.DeviceError as exc:
+        candidates = []
+        discovery_error = str(exc)
+    else:
+        discovery_error = None
+
+    if args.device:
+        node = os.path.expanduser(args.device)
+        info = next((item for item in candidates if item.node == node), None)
+        if info is None:
+            info = controller.DeviceInfo(
+                node=node,
+                sysfs=controller.sysfs_dir_for_node(node),
+                interface=None,
+                hid_id="unknown",
+            )
+        to_show = [info]
+    else:
+        to_show = candidates
+
+    if not to_show:
+        if discovery_error:
+            print("  not present (%s)" % discovery_error)
+        else:
+            print(
+                "  not present (no USB %04x:%04x device found)"
+                % (controller.VENDOR_ID, controller.PRODUCT_ID)
+            )
+    else:
+        for index, info in enumerate(to_show):
+            if index:
+                print()
+            _print_doctor_device(info)
+
+    print()
+    state_path = state.state_dir()
+    backups_path = os.path.join(state_path, "backups")
+    print("state directory: %s" % state_path)
+    print("backups directory: %s" % backups_path)
+    try:
+        entries = [
+            entry
+            for entry in os.scandir(backups_path)
+            if entry.is_dir(follow_symlinks=False)
+        ]
+    except FileNotFoundError:
+        print("backups: none (directory does not exist)")
+    except OSError as exc:
+        print("backups: cannot read directory (%s)" % (exc.strerror or exc))
+    else:
+        entries.sort(key=lambda entry: entry.name, reverse=True)
+        if not entries:
+            print("backups: none")
+        else:
+            print(
+                "recent backups (newest first, up to %d):"
+                % DOCTOR_BACKUP_LIMIT
+            )
+            for entry in entries[:DOCTOR_BACKUP_LIMIT]:
+                meta = _doctor_backup_meta(entry.path)
+                if meta is None:
+                    print("  %-24s unreadable meta.json" % entry.name)
+                    continue
+                print(
+                    "  %-24s kind=%-18s date=%s"
+                    % (
+                        entry.name,
+                        meta.get("kind") or "unknown",
+                        meta.get("created") or "unknown",
+                    )
+                )
+
+    print()
+    _print_doctor_recovery()
     return EXIT_OK
 
 

@@ -70,6 +70,7 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 ```bash
 ./bin/k622rgb info            # descriptor + declared report table
 ./bin/k622rgb check           # discovery, permissions, descriptor hash
+./bin/k622rgb doctor          # device/backup health and recovery ladder
 ./bin/k622rgb dump --report 5 --out /tmp/k622/rep5.bin
 ./bin/k622rgb config show     # current mode, parameters and palette
 ./bin/k622rgb config dump     # full lighting backup (config, palette, frames)
@@ -164,7 +165,8 @@ per-key frame. The group store is `~/.config/k622rgb/groups.json`
 (respecting `XDG_CONFIG_HOME`; override with `--file` or `K622RGB_GROUP_FILE`
 for both the `group` subcommands and `set --group`).
 
-`info`, `dump`, `check`, `list`, `config show` and `config dump` are read-only.
+`info`, `dump`, `check`, `doctor`, `list`, `config show` and `config dump` are
+read-only.
 `set` sends the captured `09 cc` report-6 frame and switches to Self-define
 mode by default (use `--no-activate` to skip that). `mode`, `color`, `off`,
 `config restore` and `profile load` use the verified configuration mailbox

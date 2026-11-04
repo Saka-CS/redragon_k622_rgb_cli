@@ -109,6 +109,37 @@ class CliTests(unittest.TestCase):
                 code = cli.main(argv)
         return code, stdout.getvalue(), stderr.getvalue(), opener, reader, writer
 
+    def run_doctor(self, argv, devices, state_home=None):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        if state_home is None:
+            state_home = self.root / "state"
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                mock.patch(
+                    "k622rgb.cli.controller.iter_devices",
+                    return_value=devices,
+                )
+            )
+            opener = stack.enter_context(
+                mock.patch("k622rgb.cli.controller.open_device", return_value=-1)
+            )
+            mailbox = stack.enter_context(
+                mock.patch("k622rgb.cli._open_mailbox")
+            )
+            stack.enter_context(
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "XDG_STATE_HOME": str(state_home),
+                        "K622RGB_STATE_DIR": "",
+                    },
+                )
+            )
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = cli.main(argv)
+        return code, stdout.getvalue(), stderr.getvalue(), opener, mailbox
+
     def report6(self):
         return bytes((0x06,)) + bytes(1031)
 
@@ -145,6 +176,79 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertIn("report_descriptor", err)
+
+    # -- doctor ----------------------------------------------------------
+
+    def test_doctor_without_device(self):
+        code, out, err, opener, mailbox = self.run_doctor(["doctor"], [])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertIn("not present", out)
+        self.assertIn("USB-C data cable", out)
+        self.assertIn("Fn+Esc", out)
+        self.assertIn("config restore --custom", out)
+        self.assertIn("sinowealth-fw-disabler", out)
+        self.assertIn("sinowisp", out)
+        self.assertIn("Update_KB_K622RGB.exe", out)
+        self.assertIn("US/UK/ABNT2", out)
+        self.assertIn("RMA", out)
+        self.assertIn("do not flash K621 firmware", out)
+        opener.assert_not_called()
+        mailbox.assert_not_called()
+        self.assertFalse((self.root / "state" / "k622rgb").exists())
+
+    def test_doctor_lists_recent_backups(self):
+        state_home = self.root / "xdg-state"
+        backups = state_home / "k622rgb" / "backups"
+        backups.mkdir(parents=True)
+        for index in range(1, 8):
+            path = backups / ("202611%02d-120000" % index)
+            path.mkdir()
+            if index == 6:
+                (path / "meta.json").write_text("{not json", encoding="utf-8")
+                continue
+            meta = {
+                "kind": "config dump" if index % 2 else "palette set",
+                "created": "2026-11-%02dT12:00:00Z" % index,
+            }
+            (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        code, out, err, opener, mailbox = self.run_doctor(
+            ["doctor"], [], state_home=state_home
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        for index in (7, 6, 5, 4, 3):
+            self.assertIn("202611%02d-120000" % index, out)
+        self.assertNotIn("20261102-120000", out)
+        self.assertNotIn("20261101-120000", out)
+        self.assertIn("kind=config dump", out)
+        self.assertIn("kind=palette set", out)
+        self.assertIn("date=2026-11-07T12:00:00Z", out)
+        self.assertIn("unreadable meta.json", out)
+        self.assertLess(
+            out.index("20261107-120000"), out.index("20261106-120000")
+        )
+        opener.assert_not_called()
+        mailbox.assert_not_called()
+
+    def test_doctor_with_device(self):
+        code, out, err, opener, mailbox = self.run_doctor(
+            ["doctor"], [self.info]
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertIn("device: %s" % self.node, out)
+        self.assertIn("interface: 01 (IF1 control)", out)
+        self.assertIn(
+            "descriptor sha256: %s" % controller.K622_DESCRIPTOR_SHA256, out
+        )
+        self.assertIn("known K622 IF1 descriptor", out)
+        opener.assert_not_called()
+        mailbox.assert_not_called()
 
     # -- dump ------------------------------------------------------------
 

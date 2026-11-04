@@ -74,6 +74,7 @@ python3 -m k622rgb --help
 ```bash
 ./bin/k622rgb check                 # discovery, permissions, descriptor hash
 ./bin/k622rgb info                  # descriptor and declared reports
+./bin/k622rgb doctor                # device/backup health and recovery steps
 ./bin/k622rgb list                  # main-key LED map
 
 ./bin/k622rgb set Esc=red           # per-key colour
