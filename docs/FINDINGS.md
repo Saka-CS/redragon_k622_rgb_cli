@@ -741,7 +741,7 @@ not exercised in the captured paths.
 `group apply` / `set --group NAME=COLOR` generate the same `09 cc` frame. No
 `09 d0` write is needed.
 
-### The `09 d0` "game" byte (experimental, tested negative)
+### The `09 d0` "game" byte (tested negative; write path removed)
 
 The app's lighting routine has exactly one `09 cc`/`09 d0` writer
 (`0x445920`), called from `0x411150`. The `09 d0` payload is sourced from
@@ -758,17 +758,12 @@ artifact is not reproducible from the current state. The payload has the shape
 of a 1024-byte table with several 126-byte key masks at offsets `0x000`,
 `0x180` and `0x310`; the meaning of those regions is not known.
 
-Because the byte location is unknown, `set --game-flag` is an opt-in
-experiment:
-
-- it reads the current `09 d0` frame from the keyboard (no hard-coded
-  template);
-- it changes one byte (`--game-flag-offset`, default `0`) to
-  `--game-flag-value` (default `1`);
-- it sends `09 cc`, then `09 d0`, then `03 c6` only when Self-define
-  activation is needed;
-- it backs up the config, palette, `09 cc` and `09 d0` tables first;
-- it prints the old/new byte and the resulting payload hash.
+Because the byte location was unknown, an opt-in `set --game-flag` experiment
+was added to probe it. It read the current `09 d0` frame from the keyboard,
+changed one byte at a caller-supplied offset, sent it after the `09 cc` frame,
+and backed up the config, palette, `09 cc` and `09 d0` tables first. It was
+removed after the hardware validation below found no observable effect; the
+probe tools were removed with it.
 
 #### Hardware validation (2026-11-03)
 
@@ -792,9 +787,8 @@ normal `set`, a mode switch and a replug, but the display stayed the plain
 `09 cc` frame. Key-press/game-input behaviour was not tested, so this does not
 rule out a non-RGB meaning for the byte.
 
-The default offset remains a hypothesis, not a confirmed protocol field. To
-test a different byte, pass `--game-flag-offset`; to clear it, pass
-`--game-flag-value 0`. The 2026-11-03 matrix above found no observable effect,
-so the "single `09 d0` byte enables game mode" hypothesis is unsupported for
-RGB rendering. The feature is kept as a diagnostic. Recovery is
-`config restore --custom BACKUP`.
+The default offset remains a hypothesis, not a confirmed protocol field. The
+2026-11-03 matrix above found no observable effect, so the "single `09 d0`
+byte enables game mode" hypothesis is unsupported for RGB rendering. The
+experimental write path and probe tools were removed. Backups made during
+testing can still be recovered with `config restore --custom BACKUP`.

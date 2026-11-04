@@ -54,8 +54,6 @@ class CliTests(unittest.TestCase):
         read_error=None,
         open_error=None,
         write_error=None,
-        read_custom=None,
-        write_custom_error=None,
         backup_error=None,
     ):
         stdout = io.StringIO()
@@ -83,23 +81,6 @@ class CliTests(unittest.TestCase):
                     "k622rgb.cli.controller.write_feature",
                     return_value=1032,
                     side_effect=write_error,
-                )
-            )
-            self.custom_reader = stack.enter_context(
-                mock.patch(
-                    "k622rgb.cli.controller.read_custom_frame",
-                    return_value=(
-                        bytes(controller.CUSTOM_PAYLOAD_SIZE)
-                        if read_custom is None
-                        else read_custom
-                    ),
-                )
-            )
-            self.custom_writer = stack.enter_context(
-                mock.patch(
-                    "k622rgb.cli.controller.write_custom_frame",
-                    return_value=1032,
-                    side_effect=write_custom_error,
                 )
             )
             self.backup = stack.enter_context(
@@ -524,105 +505,6 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertFalse(Path(state_path).exists())
-
-    def test_set_game_flag_dry_run_describes_the_companion(self):
-        code, out, err, opener, _reader, writer = self.run_cli(
-            [
-                "set", "--dry-run", "--no-state", "--no-activate",
-                "--game-flag", "--game-flag-offset", "3",
-                "--game-flag-value", "90", "Esc=red",
-            ]
-        )
-        self.assertEqual(code, 0)
-        self.assertIn(
-            "would read the current 09 d0 companion and set payload[3] = 0x5A",
-            out,
-        )
-        opener.assert_not_called()
-        writer.assert_not_called()
-        self.custom_reader.assert_not_called()
-        self.custom_writer.assert_not_called()
-        self.assertEqual(err, "")
-
-    def test_set_game_flag_writes_the_companion_after_the_colour_frame(self):
-        base = bytearray(controller.CUSTOM_PAYLOAD_SIZE)
-        base[3] = 0x11
-        base[9] = 0x22
-        code, out, _err, _opener, _reader, writer = self.run_cli(
-            [
-                "set", "--no-activate", "--no-state",
-                "--game-flag", "--game-flag-offset", "3",
-                "--game-flag-value", "90", "Esc=red",
-            ],
-            read_custom=bytes(base),
-        )
-        self.assertEqual(code, 0)
-        writer.assert_called_once()
-        self.custom_reader.assert_called_once_with(-1, 2)
-        self.custom_writer.assert_called_once()
-        fd, payload, which = self.custom_writer.call_args.args
-        self.assertEqual(fd, -1)
-        self.assertEqual(which, 2)
-        self.assertEqual(len(payload), controller.CUSTOM_PAYLOAD_SIZE)
-        self.assertEqual(payload[3], 0x5A)
-        self.assertEqual(payload[9], 0x22)       # untouched
-        self.assertIn("game flag: 09 d0 payload[3] 0x11 -> 0x5A", out)
-        self.assertIn("wrote 09 d0 companion; game byte payload[3] = 0x5A", out)
-        self.backup.assert_called_once()
-        self.assertTrue(self.backup.call_args.kwargs.get("custom"))
-
-    def test_set_game_flag_can_clear_the_byte(self):
-        base = bytearray(controller.CUSTOM_PAYLOAD_SIZE)
-        base[controller.GAME_FLAG_OFFSET] = 1
-        code, _out, _err, _opener, _reader, _writer = self.run_cli(
-            ["set", "--no-activate", "--no-state", "--game-flag",
-             "--game-flag-value", "0", "Esc=red"],
-            read_custom=bytes(base),
-        )
-        self.assertEqual(code, 0)
-        _fd, payload, _which = self.custom_writer.call_args.args
-        self.assertEqual(payload[controller.GAME_FLAG_OFFSET], 0)
-
-    def test_set_game_flag_requires_the_flag(self):
-        for extra in (["--game-flag-offset", "3"], ["--game-flag-value", "1"]):
-            with self.subTest(extra=extra):
-                code, _out, err, opener, _reader, writer = self.run_cli(
-                    ["set", "--no-activate", "--no-state"] + extra + ["Esc=red"]
-                )
-                self.assertEqual(code, 2)
-                self.assertIn("requires --game-flag", err)
-                opener.assert_not_called()
-                writer.assert_not_called()
-
-    def test_set_game_flag_rejects_bad_offset(self):
-        code, _out, err, opener, _reader, writer = self.run_cli(
-            ["set", "--no-activate", "--no-state", "--game-flag",
-             "--game-flag-offset", "1024", "Esc=red"]
-        )
-        self.assertEqual(code, 2)
-        self.assertIn("0..1023", err)
-        opener.assert_not_called()
-        writer.assert_not_called()
-
-    def test_set_game_flag_reports_companion_write_failure(self):
-        code, _out, err, _opener, _reader, writer = self.run_cli(
-            ["set", "--no-activate", "--no-state", "--game-flag", "Esc=red"],
-            write_custom_error=controller.ProtocolError("d0 stalled"),
-        )
-        self.assertEqual(code, 1)
-        writer.assert_called_once()
-        self.assertIn("09 d0 game-flag write failed", err)
-        self.assertIn("d0 stalled", err)
-        self.assertIn("config restore --custom", err)
-
-    def test_set_game_flag_hex_still_prints_the_colour_frame(self):
-        code, out, _err, _opener, _reader, _writer = self.run_cli(
-            ["set", "--no-activate", "--no-state", "--game-flag", "--hex",
-             "Esc=red"]
-        )
-        self.assertEqual(code, 0)
-        self.assertIn("packet: 1032 bytes", out)
-        self.assertIn("06 09 cc 00 40 00 00 00 ff", out)
 
     def test_set_group_overlay_precedence_in_frame(self):
         group_file = self.root / "config" / "k622rgb" / "groups.json"

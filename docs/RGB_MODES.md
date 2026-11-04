@@ -174,17 +174,9 @@ the official app changed the frame.
 
 The second custom table, `09 d0` / `89 d0`, is read by
 `k622rgb config dump` but not written by the normal CLI. It is not needed for
-per-key colours.
-
-`set --game-flag` is an experimental opt-in: it reads the current `09 d0`
-payload, changes one byte (default `payload[0] = 1`) and sends it after the
-`09 cc` frame. The byte offset is not verified; probe it with
-`--game-flag-offset`/`--game-flag-value` (decimal offsets). A 2026-11-03
-hardware matrix in Self-define (offsets `6`, `384`, `784`; values `0`, `1`,
-`255`; d0-only and cc+d0) found no observable rendering, persistence or group
-effect. Every run backs up the config, palette and both custom frames, so
-`config restore --custom BACKUP` recovers the previous state. Treat the command
-as a diagnostic, not a supported game mode.
+per-key colours. A 2026-11-03 hardware matrix found no observable rendering,
+persistence or group effect from single-byte `09 d0` writes, so the
+experimental `set --game-flag` path was removed.
 
 
 ## 6. Persistence

@@ -195,16 +195,10 @@ Implementation: `set` sends the `09 cc` frame (the per-key colours).
 `09 d0` companion is not needed for per-key colours, and the `04 d8`
 profile/keymap table is never written.
 
-`set --game-flag` is an opt-in experiment that reads the current `09 d0`
-payload, changes one byte (default `payload[0] = 1`), and sends it after the
-`09 cc` frame. The byte location is **not verified**: the vendor writer in
-`KeyboardDrv.exe` V1.6.6 zeroes the normal `09 d0` payload, and the live
-read-back does not match the captured latch hash. Use
-`--game-flag-offset`/`--game-flag-value` to probe it (offsets are decimal).
-A 2026-11-03 hardware matrix in Self-define (offsets `6`, `384`, `784`;
-values `0`, `1`, `255`; d0-only and cc+d0) found **no observable rendering or
-persistence effect**, so the single-byte game-flag hypothesis is unsupported.
-The offset remains a hypothesis, not a protocol constant.
+The `09 d0` "game" byte was probed on 2026-11-03 with a single-byte matrix;
+it produced no observable rendering or persistence effect, so the experimental
+`set --game-flag` write path was removed. The byte offset remains a
+hypothesis, not a protocol constant.
 
 
 ### 6.1 Capture sequence
@@ -394,11 +388,9 @@ slots.
    mailbox reads (`config show`, `config dump`, `mode show`, `color show`).
 3. **Writes use only validated report-0x06 shapes:** `09 cc` per-key frames,
    `03 c6` config blocks, `08 c8` effect palettes, and the `09 d0`/`09 cc`
-   custom frames during an explicit restore. `set --game-flag` is the only
-   path that mutates a `09 d0` payload; it is opt-in, reads the device frame
-   first, changes exactly one byte, and backs up all tables. Builders reject
-   wrong lengths, headers and config markers; there is no generic
-   feature-write API.
+   custom frames during an explicit restore. Only `config restore --custom`
+   mutates a `09 d0` payload. Builders reject wrong lengths, headers and config
+   markers; there is no generic feature-write API.
 4. **Writes require the captured descriptor hash.** A different descriptor is
    reported as `UNKNOWN` and refused before the device is opened.
 5. **Every config/palette write backs up first.** The tool reads the current
@@ -429,7 +421,7 @@ slots.
 | Write implementation (`set`, allowlist, state) | **Implemented; unit-tested** |
 | Hardware write test (`set Esc=red`) | **Confirmed:** Esc red, `1` green, `--off` clears |
 | Additive saved-frame behaviour | **Confirmed on hardware** |
-| `09 d0` companion | Not required for per-key colours; read-only except explicit restore and the experimental `set --game-flag` | Byte offset unverified; 2026-11-03 single-byte matrix showed no observable effect |
+| `09 d0` companion | Not required for per-key colours; read-only except explicit restore | Byte offset unverified; 2026-11-03 single-byte matrix showed no observable effect; experimental write path removed |
 | Read-back backup for report 6 | **Confirmed via mailbox** (`89 cc`); `set --from-device` uses it |
 | Config read/write (`83 c6` / `03 c6`) | **Confirmed:** 136-byte no-op round trip |
 | Effect palette (`88 c8` / `08 c8`) | **Confirmed:** 441-byte round trip |

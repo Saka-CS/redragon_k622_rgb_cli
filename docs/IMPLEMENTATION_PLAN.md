@@ -614,14 +614,15 @@ Out of scope for this plan, but natural next steps:
   (Color Group → Define1..5) that reuses the `09 cc` frame; see
   [FINDINGS.md](FINDINGS.md) §12. Implemented as `k622rgb group`
   (`list`, `set`, `apply`, `import`) and `set --group NAME=COLOR`.
-- ~~Confirming the `09 d0` game byte.~~ Attempted on 2026-11-03:
-  `set --game-flag` was exercised across Self-define, three nonzero payload
+- ~~Confirming the `09 d0` game byte.~~ Attempted on 2026-11-03 with the
+  experimental `set --game-flag` path across Self-define, three nonzero payload
   regions (`6`, `384`, `784`), values `0`/`1`/`255`, d0-only and cc+d0
   sequences, plus a mode switch and replug. No observable rendering,
   persistence or group effect was found, so the single-byte game-flag
-  hypothesis is unsupported and the command is kept as a diagnostic. The
-  remaining open question is whether the byte affects game-input (key-press)
-  behaviour rather than RGB output. See [FINDINGS.md](FINDINGS.md) §12.
+  hypothesis is unsupported. The experimental command and its probe tools were
+  removed. The remaining open question is whether the byte affects game-input
+  (key-press) behaviour rather than RGB output. See
+  [FINDINGS.md](FINDINGS.md) §12.
 - Keymap/macro editing, if a safe and captured protocol appears.
 - Wireless (Bluetooth/2.4 GHz) and ISO variants.
 - Plugin system for effects.

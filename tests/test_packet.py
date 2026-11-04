@@ -222,55 +222,5 @@ class ColorsFromPacketTests(unittest.TestCase):
         self.assertEqual(controller.lit_slots({6: (0, 0, 0)}), [])
 
 
-class GameFlagTests(unittest.TestCase):
-    def test_default_offset_is_the_first_payload_byte(self):
-        payload = bytes(controller.CUSTOM_PAYLOAD_SIZE)
-        self.assertEqual(controller.read_game_flag(payload), 0)
-        modified = controller.set_game_flag(payload)
-        self.assertEqual(modified[controller.GAME_FLAG_OFFSET], 1)
-        self.assertEqual(controller.read_game_flag(modified), 1)
-
-    def test_sets_and_clears_a_custom_offset(self):
-        payload = bytes(controller.CUSTOM_PAYLOAD_SIZE)
-        modified = controller.set_game_flag(payload, 0x5A, 17)
-        self.assertEqual(modified[17], 0x5A)
-        self.assertEqual(modified[:17], payload[:17])
-        self.assertEqual(modified[18:], payload[18:])
-        self.assertEqual(controller.read_game_flag(modified, 17), 0x5A)
-        cleared = controller.set_game_flag(modified, controller.GAME_FLAG_OFF, 17)
-        self.assertEqual(cleared[17], 0)
-
-    def test_rejects_wrong_payload_length(self):
-        for payload in (b"", bytes(1023), bytes(1025)):
-            with self.subTest(length=len(payload)):
-                with self.assertRaises(controller.ConfigError):
-                    controller.set_game_flag(payload)
-
-    def test_rejects_non_bytes(self):
-        with self.assertRaises(TypeError):
-            controller.set_game_flag([0] * controller.CUSTOM_PAYLOAD_SIZE)
-
-    def test_rejects_out_of_range_offset_or_value(self):
-        payload = bytes(controller.CUSTOM_PAYLOAD_SIZE)
-        for offset in (-1, controller.CUSTOM_PAYLOAD_SIZE):
-            with self.subTest(offset=offset):
-                with self.assertRaises(ValueError):
-                    controller.set_game_flag(payload, 1, offset)
-        for value in (-1, 256):
-            with self.subTest(value=value):
-                with self.assertRaises(ValueError):
-                    controller.set_game_flag(payload, value, 0)
-
-    def test_custom_packet_uses_the_modified_payload(self):
-        payload = controller.set_game_flag(
-            bytes(controller.CUSTOM_PAYLOAD_SIZE), 1, 3
-        )
-        packet = controller.build_custom_packet(payload, 2)
-        self.assertEqual(packet[:8], controller.CUSTOM_HEADERS[2])
-        self.assertEqual(packet[8], 0)
-        self.assertEqual(packet[11], 1)
-        self.assertEqual(packet[8:], payload)
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -1169,15 +1169,6 @@ CUSTOM_HEADERS = {
 }
 CUSTOM_PAYLOAD_SIZE = 1024
 
-#: Experimental location of the vendor "game" byte inside the ``09 d0``
-#: payload.  The payload layout is not documented and the official app's
-#: normal lighting path writes an all-zero payload here, so this offset is a
-#: hypothesis, not a verified protocol field.  ``set --game-flag`` uses it as
-#: the default and lets the caller override it for a controlled experiment.
-GAME_FLAG_OFFSET = 0
-GAME_FLAG_ON = 1
-GAME_FLAG_OFF = 0
-
 
 def validate_custom_payload(payload) -> bytes:
     """Return a checked 1024-byte custom-frame payload."""
@@ -1190,37 +1181,6 @@ def validate_custom_payload(payload) -> bytes:
             % (len(payload), CUSTOM_PAYLOAD_SIZE)
         )
     return payload
-
-
-def validate_game_flag(offset=GAME_FLAG_OFFSET, value=GAME_FLAG_ON) -> None:
-    """Validate an experimental game-byte offset/value pair."""
-    if isinstance(offset, bool) or not isinstance(offset, int):
-        raise ValueError("game flag offset must be an integer")
-    if not 0 <= offset < CUSTOM_PAYLOAD_SIZE:
-        raise ValueError(
-            "game flag offset must be 0..%d" % (CUSTOM_PAYLOAD_SIZE - 1)
-        )
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError("game flag value must be an integer")
-    if not 0 <= value <= 255:
-        raise ValueError("game flag value must be 0..255")
-
-
-def read_game_flag(payload, offset: int = GAME_FLAG_OFFSET) -> int:
-    """Return the byte at ``offset`` in a ``09 d0`` payload."""
-    payload = validate_custom_payload(payload)
-    validate_game_flag(offset, 0)
-    return payload[offset]
-
-
-def set_game_flag(payload, value: int = GAME_FLAG_ON,
-                  offset: int = GAME_FLAG_OFFSET) -> bytes:
-    """Return a copy of ``payload`` with the experimental game byte changed."""
-    payload = validate_custom_payload(payload)
-    validate_game_flag(offset, value)
-    modified = bytearray(payload)
-    modified[offset] = value
-    return bytes(modified)
 
 
 def build_custom_packet(payload, which: int = 1) -> bytes:

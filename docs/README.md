@@ -23,12 +23,10 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 - Colour groups: **implemented locally** (vendor `Define1..5` import, presets,
   `group apply`, and `set --group` overlays); they reuse the verified `09 cc`
   frame and need no new protocol.
-- `09 d0` game byte: **experimental, tested negative** (`set --game-flag`). The
-  tool reads the current companion frame, changes one byte (default
-  `payload[0] = 1`), backs up all tables and sends it. A 2026-11-03 hardware
-  matrix in Self-define found no observable rendering, persistence or group
-  effect; the byte offset is still unverified, so probe it with
-  `--game-flag-offset`/`--game-flag-value` (decimal offsets).
+- `09 d0` game byte: **tested negative** on 2026-11-03 (no observable
+  rendering, persistence or group effect). The experimental `set --game-flag`
+  write path and its probe tools were removed; the remaining open question is
+  whether the byte affects game-input behaviour rather than RGB output.
 - Built-in effects, brightness/speed, effect palette and Self-define/OFF:
   **implemented and verified on hardware** (config `03 c6` round trip,
   `08 c8` palette write, `05 83 c6`/`05 88 c8` reads).
