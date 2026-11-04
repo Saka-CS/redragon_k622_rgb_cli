@@ -7,10 +7,9 @@ uses a different numbering system for the same physical LEDs:
     Cfg slot    = col * 6  + row      (column-major, 6 rows)
     packet slot = row * 21 + col      (row-major, 21 columns)
 
-The current ``layout.py`` uses the Cfg slot as the packet index, so every key
-is shifted.  This tool tests every packet slot on the physical keyboard,
-records what actually lights, and writes the result to
-``docs/keymap-observed.json``.
+``layout.py`` and the generated ``keymap_data.py`` use the packet slot as the
+index.  This tool tests every packet slot on the physical keyboard, records
+what actually lights, and writes the result to ``docs/keymap-observed.json``.
 
 Typical use::
 
@@ -20,7 +19,8 @@ Typical use::
     python3 tools/keymap_probe.py verify
 
 The probe is non-destructive: it backs up the config, palette and custom frame
-before writing, and restores them when it exits (including Ctrl-C).
+before writing, and restores the config and custom frame when it exits
+(including Ctrl-C).
 """
 
 import argparse

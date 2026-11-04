@@ -4,6 +4,12 @@ Linux CLI for per-key RGB control of the **Redragon K622 Horus TKL RGB**
 keyboard, modeled on
 [redragon-ks82b-rgb](https://github.com/kn4oqw-clint/redragon-ks82b-rgb).
 
+> **Current state (2026-11-04): implemented.** `k622rgb` `0.5.0` provides
+> per-key frames, colour groups, all 20 built-in effects plus Self-define/OFF,
+> the effect palette, config/palette backups and restore, and local profiles.
+> The suite has 246 passing unit tests. The command reference is section 5;
+> the phase plan in section 10 is historical.
+
 > **Status note (2026-11-01): the original premises are superseded.**
 > The K622's IF1 descriptor declares only feature reports `0x05` (5 B) and
 > `0x06` (1031 B); report `0x08` does not exist. Read-only recon is complete:
@@ -13,8 +19,9 @@ keyboard, modeled on
 > colour planes. The `set` command implements that frame behind an allowlist,
 > a descriptor-hash check, `--dry-run`, and a local last-frame record. Hardware
 > verification passed: `set Esc=red` lit Esc red, a second `set 1=green` kept
-> both, and `set --off` cleared the board. The `09 d0`/`03 c6` companions are
-> not required. See [PROTOCOL.md](PROTOCOL.md) sections 6.3 and 13.
+> both, and `set --off` cleared the board. The `09 d0` latch is not needed for
+> per-key colours, and `03 c6` is used separately for mode/config writes. See
+> [PROTOCOL.md](PROTOCOL.md) sections 6.3 and 13.
 > Treat the phase plan below as historical where it mentions report `0x08`.
 >
 > **Phase 2 removed (2026-11-01).** Hardware testing showed that the K622's
@@ -36,15 +43,16 @@ keyboard, modeled on
 > and `off` use the verified `83 c6`/`03 c6` config mailbox and the
 > `88 c8`/`08 c8` effect palette. Brightness `0–9`, speed `1–4`, random or one
 > of seven per-mode colours, Self-define and OFF all work on hardware. Every
-> write is preceded by a full config/palette backup; `config restore` is the
-> recovery path. See [RGB_MODES.md](RGB_MODES.md).
+> write is preceded by a full config/palette backup unless `--no-backup` is
+> given; `config restore` is the recovery path. See [RGB_MODES.md](RGB_MODES.md).
 
 ## 1. Confirmed scope
 
 - **Core CLI + onboard effects + profiles** — no daemon, GUI, MQTT, or systemd
   service.
-- **The 87 main keys** are the complete RGB set. The G/MR/media keys are not
-  RGB; slot calibration and `layout.json` were removed after hardware testing.
+- **The RGB set is the 87 main keys plus three addressable logo zones**
+  (`LogoLeft`, `LogoCenter`, `LogoRight`). The G/MR/media keys are not RGB;
+  slot calibration and `layout.json` were removed after hardware testing.
 - **Pure Python standard library** + `bin/k622rgb` launcher — no pip, venv, or
   third-party runtime modules.
 - **Wired USB, US QWERTY K622 only.**
@@ -73,19 +81,29 @@ k622rgb/
 │   ├── __main__.py             # python -m k622rgb
 │   ├── cli.py                  # argparse, command dispatch, output
 │   ├── controller.py           # discovery, report codecs, ioctl, frame builders
-│   ├── layout.py               # slot→key map, aliases, dead slots
+│   ├── layout.py               # slot→key/zone lookup, aliases, dead slots
+│   ├── keymap_data.py          # generated packet-slot tables
+│   ├── groups.py               # Define1..5, presets, Cfg.ini import
 │   ├── colors.py               # hex / named / r,g,b parsing and scaling
 │   ├── profiles.py             # local lighting profile storage
 │   ├── state.py                # last-frame and backup storage
 │   └── data/
 │       └── template_color.bin  # captured 1032-byte report-0x06 template
+├── tools/
+│   └── keymap_probe.py         # interactive slot probe / keymap generator
 ├── udev/
 │   └── 60-k622rgb.rules
 ├── tests/
+│   ├── __init__.py
+│   ├── data/
+│   │   └── k622-if1-descriptor.bin
 │   ├── test_cli.py
 │   ├── test_colors.py
 │   ├── test_controller.py
 │   ├── test_descriptor.py
+│   ├── test_groups.py
+│   ├── test_keymap_data.py
+│   ├── test_keymap_probe.py
 │   ├── test_layout.py
 │   ├── test_modes.py
 │   ├── test_packet.py
@@ -95,6 +113,7 @@ k622rgb/
 │   ├── FINDINGS.md
 │   ├── PROTOCOL.md
 │   ├── KEYMAP.md
+│   ├── keymap-observed.json
 │   ├── RGB_MODES.md
 │   └── IMPLEMENTATION_PLAN.md
 ├── README.md
@@ -111,7 +130,9 @@ k622rgb/
 |---|---|
 | `controller.py` | Find IF1, parse/validate the descriptor, read the config/palette/frame mailboxes, and build/validate/send the captured report-0x06 write shapes. |
 | `layout.py` | Loads the generated packet-slot tables (`keymap_data.py`): 87 keys, 3 logo zones, aliases and dead slots; resolves names to packet slots. |
-| `colors.py` | Parse `#RRGGBB`, `RRGGBB`, `r,g,b`, named colors; scale brightness for `set`. |
+| `keymap_data.py` | Generated `SLOT_NAMES`, `ZONE_NAMES`, `ALIAS_SLOTS`, `DEAD_SLOTS` and `UNLIT_KEYS` tables from `docs/keymap-observed.json`. |
+| `groups.py` | Store, recolour and paint `Define1..5` and preset groups; import the vendor `GaoshouKey1..5` lists from `Cfg.ini` read-only. |
+| `colors.py` | Parse `#RRGGBB`, `RRGGBB`, `#RGB`, `r,g,b`, named colors; scale brightness for `set`. |
 | `profiles.py` | Read/write lighting profiles atomically; list/show/delete. |
 | `state.py` | Store the last one-shot frame and timestamped config/palette backups atomically. |
 | `cli.py` | Parse commands, route to modules, consistent errors/exit codes. |
@@ -156,7 +177,14 @@ COLOR_REPORT_ID = 0x06
 COLOR_PACKET_HEADER = bytes.fromhex("06 09 cc 00 40 00 00 00")
 COLOR_PLANE_BASES = (8, 134, 260)   # R, G, B
 CONFIG_WRITE_HEADER = bytes.fromhex("06 03 c6 00 40 00 00 00")
-PALETTE_WRITE_HEADER = bytes.fromhex("06 08 c8 00 40 00 00 00")
+COLOR_WRITE_HEADER = bytes.fromhex("06 08 c8 00 40 00 00 00")
+CUSTOM_HEADERS = {
+    1: bytes.fromhex("06 09 cc 00 40 00 00 00"),
+    2: bytes.fromhex("06 09 d0 00 40 00 00 00"),
+}
+CUSTOM_PAYLOAD_SIZE = 1024
+PER_KEY_MODE = 21
+OFF_MODE = 0
 ```
 
 ### 4.2 Discovery
@@ -180,15 +208,15 @@ IF1 descriptor hash before any write.
 
 ```python
 def build_color_packet(colors):
-    packet = bytearray(COLOR_PACKET_HEADER)
-    for slot in range(NUM_SLOTS):
-        r, g, b = colors.get(slot, (0, 0, 0))
-        packet.extend((r & 0xFF, g & 0xFF, b & 0xFF))
-    # ... pad to the captured 1032-byte template ...
+    packet = bytearray(load_color_template())   # captured 1032-byte frame
+    for slot, (r, g, b) in colors.items():
+        for base, value in zip(COLOR_PLANE_BASES, (r, g, b)):
+            packet[base + slot] = value
     return bytes(packet)
 
 def build_config_packet(config): ...          # 03 c6, 136 config bytes
 def build_effect_palette_packet(palette): ... # 08 c8, 441 palette bytes
+def build_custom_packet(payload, which): ...  # 09 cc / 09 d0 custom frames
 ```
 
 `validate_color_packet()`, `validate_config()` and
@@ -199,8 +227,10 @@ trailer before a write is attempted.
 
 ```python
 def write_feature(fd: int, packet) -> int:
-    # HIDIOCSFEATURE(len(packet)) after validation
-    return fcntl.ioctl(fd, hidiocsfeature(len(packet)), packet)
+    # HIDIOCSFEATURE(len(packet)) after validation.
+    # A writable bytearray is required for the 1032-byte frame.
+    buffer = bytearray(packet)
+    return fcntl.ioctl(fd, hidiocsfeature(len(buffer)), buffer)
 ```
 
 ### 4.5 Safety boundary
@@ -223,7 +253,7 @@ def write_feature(fd: int, packet) -> int:
 | `k622rgb info` | Show the HID report descriptor and declared reports |
 | `k622rgb dump --report {5,6}` | Read a declared feature report (read-only) |
 | `k622rgb check` | Verify discovery, permissions and the descriptor hash |
-| `k622rgb list [--all]` | Print the main-key LED map and duplicate/dead slots |
+| `k622rgb list [--all]` | Print the main-key LED map with logo zones, aliases and dead slots |
 | `k622rgb set [KEY=COLOR ...]` | Write a per-key frame (`--all`, `--off`, `--reset`, `--from-device`, `--no-activate`, `--brightness 0-9`, `--dry-run`, `--group NAME=COLOR`, `--file FILE`) |
 | `k622rgb group list/set/apply/import` | Manage local colour groups, import vendor `GaoshouKey1..5`, and paint them into a per-key frame |
 | `k622rgb off` | Select the built-in OFF mode |
@@ -285,6 +315,7 @@ Some commands add their own flags (`set --state/--no-state/--hex`,
 | `0` | Success |
 | `1` | Device/protocol/runtime error |
 | `2` | Usage error (bad arguments, unknown key, invalid color) |
+| `130` | Interrupted (`SIGINT` / Ctrl-C) |
 
 ## 6. Layout
 
@@ -319,10 +350,16 @@ state directory, `~/.local/state/k622rgb/` (override with
 └── backups/
     └── 20261101-132700/
         ├── meta.json
-        ├── config.bin
-        ├── palette.bin
-        └── custom-frame-1.bin
+        ├── config-response.bin
+        ├── colors-response.bin
+        ├── custom1-response.bin
+        ├── custom2-response.bin
+        └── profile-response.bin
 ```
+
+The full set above is what `config dump` writes. The automatic backup taken
+before a write contains only `meta.json`, `config-response.bin` and
+`colors-response.bin`.
 
 ### 7.2 Profile schema
 
@@ -412,7 +449,7 @@ For a quick test:
 ```bash
 sudo ./bin/k622rgb check
 # or temporarily:
-sudo chmod 666 /dev/hidraw6   # resets on replug
+sudo chmod 666 /dev/hidrawN   # resets on replug; never hardcode the number
 ```
 
 `check` reports which case applies.
@@ -428,10 +465,12 @@ sudo chmod 666 /dev/hidraw6   # resets on replug
 
 ### Phase 0 — Hardware protocol probe (gate)
 
-**Deliverables:**
+**Deliverables (historical):**
 
-- Minimal `controller.py` with discovery, frame builder, and `send_led_frame()`.
-- `k622rgb probe` command.
+- ~~Minimal `controller.py` with discovery, frame builder, and
+  `send_led_frame()`.~~ `controller.py` exists, but the shipped API is
+  `build_color_packet()` / `write_feature()`.
+- ~~`k622rgb probe` command.~~ Never implemented.
 - Unit tests for packet length/header and discovery with fake sysfs.
 - Updated verification table in `PROTOCOL.md`.
 
@@ -446,36 +485,44 @@ sudo chmod 666 /dev/hidraw6   # resets on replug
 7. Sweep all 126 packet slots; the final sweep found logo zones at 77–79
    and dead slots elsewhere. A key-name verify pass corrected the bottom row.
 
-**Exit criteria:**
+**Exit criteria (historical; superseded):**
 
-- Board responds to report `0x08`.
+- ~~Board responds to report `0x08`.~~ Report `0x08` does not exist; the write
+  path is report `0x06` (`09 cc`).
 - Main-key slots match the official map.
 - Typing is unaffected; no disconnect.
 - Extra-slot observations recorded.
 
-**If it fails:** stop. Do not try report `0x06`. Investigate with a USB capture
-of the official Windows software or further static analysis.
+**If it fails (historical guidance; do not follow):** stop. Do not try report
+`0x06`. Investigate with a USB capture of the official Windows software or
+further static analysis. *This guidance was overturned:* report `0x08` failed,
+and the capture showed report `0x06` is the correct path.
 
 ### Phase 1 — Core CLI (MVP)
 
-**Deliverables:**
+**Deliverables (historical):**
 
 - Package skeleton and launcher.
 - `controller.py`, `layout.py`, `colors.py`, `doctor.py`.
-- Commands: `list`, `info`, `doctor`, `set`, `off`, `key`, `keys`, `fill`,
-  `brightness`, `install-udev`.
-- Global flags: `--device`, `--dry-run`, `--verbose`, `--json`.
+- ~~Commands: `list`, `info`, `doctor`, `set`, `off`, `key`, `keys`, `fill`,
+  `brightness`, `install-udev`.~~ Only `list`, `info`, `set`, `off` shipped
+  from this list; the other names were never implemented. Later phases added
+  `group`, `mode`, `color`, `config` and `profile`.
+- ~~Global flags: `--device`, `--dry-run`, `--verbose`, `--json`.~~ `--device`,
+  `--dry-run`, `--verbose` and `--version` exist; `--json` was never
+  implemented.
 - `udev/60-k622rgb.rules`.
 - Unit tests for packet, layout, colors, controller (mocked ioctl), CLI parsing.
 - `README.md` quick start.
 
-**Exit criteria:**
+**Exit criteria (historical; superseded):**
 
-- `set`, `key`, `keys`, `fill`, `off`, `brightness`, `list`, `doctor` work on
-  hardware.
-- `--dry-run` prints a valid 382-byte packet.
+- ~~`set`, `key`, `keys`, `fill`, `off`, `brightness`, `list`, `doctor` work on
+  hardware.~~ Only the commands listed in section 5 exist and were verified.
+- ~~`--dry-run` prints a valid 382-byte packet.~~ The captured frame is
+  **1032 bytes** (report ID plus 1031 data bytes); `--dry-run` prints that.
 - Permission errors produce actionable messages.
-- Unit tests pass with `python3 -m unittest discover`.
+- Unit tests pass with `python3 -m unittest discover -s tests -v`.
 
 ### Phase 2 — Calibration (removed)
 
@@ -530,8 +577,11 @@ extra-key aliases were removed.
 | Test file | Coverage |
 |---|---|
 | `test_packet.py` | Captured template, 1032-byte length, header, RGB planes, zero fill, slot offsets, validation |
-| `test_layout.py` | 87 keys, dead/duplicate slots, aliases, numeric slots, rejected extra-key names |
-| `test_colors.py` | Hex, named, `r,g,b`, invalid input, formatting |
+| `test_layout.py` | 87 keys, zones, dead/alias slots, numeric slots, rejected extra-key names |
+| `test_keymap_data.py` | Generated tables match `docs/keymap-observed.json` (keys, zones, dead slots) |
+| `test_keymap_probe.py` | Probe map/report/apply helpers and generated-table formatting |
+| `test_groups.py` | Group store, presets, `Cfg.ini` import, merge precedence, env/`--file` overrides |
+| `test_colors.py` | Hex (3/6 digit), named, `r,g,b`, invalid input, formatting |
 | `test_profiles.py` | Round-trip, atomic write, invalid JSON, missing/invalid fields |
 | `test_modes.py` | Mode table, config parse/build/validate, palette, factory-reset layout, CLI mode paths |
 | `test_controller.py` | Discovery with fake sysfs, descriptor checks, ioctl numbers, read/write feature shapes, errors |
@@ -549,7 +599,8 @@ python3 -m unittest discover -s tests -v
 - `check` on a fresh session.
 - `set Esc=red`, `set --all 00aaff`, `set --off`, `off`.
 - Per-key sweep: every main key individually.
-- Dead-slot check: slots `6, 23, ...` produce no light.
+- Dead-slot check: slots `1, 17, 18, 19, 20, ...` produce no light (full list
+  in [KEYMAP.md](KEYMAP.md)). Slots `6` (`F5`) and `23` (`2`) are live.
 - `list` and `slot:N` diagnostics.
 - All 20 effects with brightness/speed/colour/random; check flicker and typing.
 - `config dump` / `config restore` round-trip.
@@ -561,7 +612,7 @@ python3 -m unittest discover -s tests -v
 ### 11.3 Fuzzing / edge cases
 
 - Invalid key names, empty assignment list, duplicate keys.
-- Colors with missing `#`, 3-digit hex (rejected), out-of-range `r,g,b`.
+- Colors with missing `#`, 3-digit hex (accepted and expanded), out-of-range `r,g,b`.
 - Device disconnect mid-write: stop with a clear error, no traceback.
 - Short/long or malformed packets: rejected before ioctl.
 - Unknown descriptor hash: writes refused before the device is opened.
@@ -573,10 +624,10 @@ python3 -m unittest discover -s tests -v
 | Unknown descriptor or firmware revision | Descriptor hash check; writes refused before opening the device |
 | Malformed/unsupported write shape | Only captured `09 cc`, `03 c6`, `08 c8` and custom-frame packets; validated first |
 | Accidental keymap/macro write | Those report shapes are never built or sent |
-| Extra keys not addressable | Documented limitation; the 87 main keys still work |
+| Extra keys not addressable | Documented limitation; the 87 main keys plus three logo zones still work |
 | Built-in effect overrides per-key frame | `set` switches to Self-define by default; `--no-activate` leaves the mode alone |
 | udev/uaccess not applied | `check` reports it; fallback `MODE="0666"` documented |
-| Bad config write | Full read-back backup before every write; `config restore` |
+| Bad config write | Full read-back backup before every write unless `--no-backup`; `config restore` |
 | Multiple writers | Detect busy device; clear error |
 | Label typos | Normalize `SrcLock` → `ScrLk`; keep aliases |
 

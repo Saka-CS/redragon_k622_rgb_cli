@@ -1,13 +1,14 @@
 # Research findings — Redragon K622 RGB on Linux
 
-- **Research date:** 2026-11-01
+- **Research date:** 2026-11-01 (updated 2026-11-04)
 - **Hardware:** Redragon K622 Horus TKL RGB, wired USB
 - **USB ID:** `258a:0049`
 - **Host:** Linux, Python 3.14.8, Hyprland/Omarchy desktop
-- **Status:** per-key writes, built-in effects, brightness/speed, effect
-  palette and config backup/restore are implemented and verified on the
-  physical K622. The extra G/MR/media keys are **not RGB**. Only optional work
-  remains.
+- **Status:** per-key writes, colour groups, built-in effects,
+  brightness/speed, the effect palette, config backup/restore and local
+  profiles are implemented and verified on the physical K622 (`k622rgb`
+  `0.5.0`; 246 unit tests). The extra G/MR/media keys are **not RGB**. Only
+  optional work remains.
 
 > **2026-11-01 correction — packet-slot sweep.** The `Cfg.ini` LED slot is not
 > the report-0x06 packet index. The packet is row-major
@@ -186,8 +187,8 @@ the green plane, and 260..385 the blue plane, each with slot 0 first. Bytes
 `5d922916bdeadf7bfc3676a00855b8c0b9e05562e083d344d67dd58c73e4626a`).
 
 The tool builds a frame by copying that template, writing the three planes,
-and checking the header and tail before `HIDIOCSFEATURE(1032)`. It sends only
-the `09 cc` frame.
+and checking the header and tail before `HIDIOCSFEATURE(1032)`. For per-key
+colours it sends only the `09 cc` frame.
 
 ### 3.5 Hardware write verification (2026-11-01)
 
@@ -198,9 +199,10 @@ the `09 cc` frame.
 | Clear | `set --off` | all LEDs dark; saved frame hash = template hash |
 
 The colour frame alone is sufficient. The constant `09 d0` and `03 c6`
-companions captured alongside it are **not required** for per-key colours and
-remain unsent. The slot/plane mapping derived from `Cfg.ini` and the capture
-matches the physical board.
+companions captured alongside it are **not required** for per-key colours;
+`03 c6` is used separately for mode/config writes, and `09 d0` is only written
+by `config restore --custom`. The slot/plane mapping derived from `Cfg.ini`
+and the capture matches the physical board.
 
 Implementation note: CPython's `fcntl` refuses an immutable `bytes` ioctl
 argument over 1024 bytes (`ValueError: ioctl argument 3 is too long`). Passing
@@ -217,7 +219,7 @@ then succeeds without a stall.
 | Size | 2,890,226 bytes |
 | Format | PE32, Inno Setup 5.3.3 |
 | Source | Redragon CDN (`cdn.shopify.com/s/files/1/0012/4957/4961/files/...`) |
-| Executed? | **No** — inspected statically only |
+| Installer executed? | **No** — inspected statically; the extracted app was later run under Wine 11 (§11) |
 
 Extracted with `innoextract 1.9`:
 
@@ -499,7 +501,7 @@ on the K622 produced the 5-second `ETIMEDOUT` that motivated this pivot.
 | 126-slot / 126-byte planes | **Confirmed by capture** | R `8`, G `134`, B `260` |
 | RGB channel order R,G,B | **Confirmed** | `Cfg.ini` `RGBIndex=0,1,2` |
 | Report-6 lighting write packet | **Captured** | `09 cc` + 13 complete updates |
-| Write implementation (`set`, allowlist, state) | **Implemented, unit-tested** | 163 tests; `--dry-run` |
+| Write implementation (`set`/`mode`/`color`/`config`/`profile`, allowlist, state) | **Implemented, unit-tested** | 246 tests; `--dry-run` |
 | Hardware write (`set Esc=red`) | **Confirmed** | Esc red; `1` green; `--off` clears |
 | Additive saved-frame behaviour | **Confirmed on hardware** | Second `set` kept the first colour |
 | `09 d0` / `03 c6` companions | **Not required for per-key colours** | Colour frame alone works; `03 c6` is used for mode config; single-byte `09 d0` probe showed no observable effect (2026-11-03) |
@@ -543,11 +545,11 @@ Implications:
 | USB ID | `258a:0049` | `258a:0049` |
 | Controller | Sinowealth | Sinowealth |
 | Descriptor | Documented, identical to K622 | Identical to reference |
-| Layout | Full-size, 108 LEDs | TKL, 87 RGB main keys; extra keys not RGB |
+| Layout | Full-size, 108 LEDs | TKL, 87 RGB main keys + 3 logo zones; extra keys not RGB |
 | Packet | 382-byte feature report `0x08` (not valid on K622) | Captured report `0x06` `09 cc`, 1032 B |
 | Language | Pure Python stdlib | Same |
 | CLI | `ks82rgb` | `k622rgb` |
-| Features | CLI, effects, profiles, daemon, GUI, MQTT, plugins, ambient modes | Core CLI + effects + profiles only |
+| Features | CLI, effects, profiles, daemon, GUI, MQTT, plugins, ambient modes | Core CLI + effects + profiles + colour groups |
 | Udev | `MODE="0666"` | `TAG+="uaccess"` preferred; `MODE="0666"` fallback |
 | License | MIT | MIT (default) |
 
@@ -559,12 +561,12 @@ reactive key effects, and ambient modes are future work.
 ## 9. Open questions and risks
 
 1. **Report-6 write packet** — Resolved. The captured `09 cc` frame alone sets
-   per-key colours on hardware; the `09 d0` latch and `03 c6` config packets
-   are not needed and remain unsent.
-2. **Read-back backup** — Report `0x06` GET stalls in isolation. The captured
-   handshake returns the config, not the colour buffer, so a true read-back is
-   still unavailable. The CLI stores the frame it last wrote as a local
-   write-ahead record instead.
+   per-key colours on hardware; the `09 d0` latch is not needed for per-key
+   colours, and `03 c6` is used separately for mode/config writes.
+2. **Read-back backup** — Resolved. Report `0x06` GET still stalls in
+   isolation, but the vendor mailbox command `05 89 cc` returns the custom
+   per-key frame; `set --from-device` uses it. By default `set` still keeps a
+   local write-ahead record of the last frame it sent.
 3. **Extra-key addressability** — Resolved. The K622's G/MR/media keys have no
    individually addressable RGB LEDs. The full sweep found only the three
    logo zones (packet 77–79) among the extra slots; the rest are dead.
@@ -576,8 +578,9 @@ reactive key effects, and ambient modes are future work.
    profile-table memory; only the captured config/palette/frame shapes are sent.
 6. **udev/uaccess timing** — `TAG+="uaccess"` depends on the login seat. If the
    ACL does not appear, fall back to `MODE="0666"` or a dedicated group.
-7. **Frame rate/flicker** — 30 FPS over hidraw should be fine, but the board may
-   tear or flicker. Tune FPS and consider skipping unchanged frames.
+7. **Future host-side animation** — 30 FPS over hidraw should be fine, but the
+   board may tear or flicker. Tune FPS and consider skipping unchanged frames.
+   The current tool only selects firmware effects; it does not animate frames.
 8. **Regional/wireless variants** — US QWERTY wired only. ISO, Bluetooth, and
    2.4 GHz variants are out of scope.
 9. **Shared K618/K622 config** — Some `Cfg.ini` entries (e.g., G5) may belong to
@@ -608,7 +611,8 @@ grep -ri '258a\|sinowealth\|redragon' /etc/udev/rules.d /usr/lib/udev/rules.d
 
 ### 10.2 Temporary artifacts
 
-The installer and extracted files live under `/tmp/opencode/k622/`:
+Research artifacts were split between `/tmp/opencode/k622/` (installer and
+extracted app) and `/tmp/k622/` (captures and templates):
 
 ```text
 /tmp/opencode/k622/k622_setup.exe
@@ -628,7 +632,8 @@ The all-off colour template is also committed as
 every write.
 
 These are research artifacts and are **not** part of the repository. The
-installer was downloaded from the official Redragon CDN and was never executed.
+installer was downloaded from the official Redragon CDN and was never executed;
+the extracted application was later run under Wine 11 as described in §11.
 
 ### 10.3 Sources
 

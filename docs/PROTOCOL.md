@@ -290,7 +290,8 @@ the remaining extra slots are dead.
 
 ```python
 fd = os.open(node, os.O_RDONLY)   # info / dump / check
-fd = os.open(node, os.O_RDWR)     # set (the captured lighting frame)
+fd = os.open(node, os.O_RDWR)     # set, group apply, mode, color,
+                                  # config restore, off, profile save/load
 ```
 
 ### 8.2 ioctl numbers
@@ -313,8 +314,10 @@ def hidiocsfeature(length: int) -> int:
 
 `fcntl.ioctl` mutates a `bytearray` in place for `HIDIOCGFEATURE` and returns
 the number of bytes copied (the full buffer length on success). For
-`HIDIOCSFEATURE` the frame is passed as an immutable `bytes` object; a
-non-negative return means the kernel accepted the transfer.
+`HIDIOCSFEATURE` the frame must also be passed as a writable `bytearray`:
+CPython's `fcntl` refuses an immutable `bytes` argument larger than 1024 bytes
+with `ValueError: ioctl argument 3 is too long`. A non-negative return means
+the kernel accepted the transfer.
 
 ### 8.3 Errors
 
@@ -418,10 +421,10 @@ slots.
 | 126-slot / 126-byte planes | **Confirmed on hardware** (R `8`, G `134`, B `260`) |
 | RGB order R,G,B | Confirmed from `Cfg.ini` |
 | Report-6 LED write packet | **Captured:** `09 cc` + 13 complete updates |
-| Write implementation (`set`, allowlist, state) | **Implemented; unit-tested** |
+| Write implementation (`set`/`mode`/`color`/`config`/`profile`, allowlist, state) | **Implemented; unit-tested** (246 tests) |
 | Hardware write test (`set Esc=red`) | **Confirmed:** Esc red, `1` green, `--off` clears |
 | Additive saved-frame behaviour | **Confirmed on hardware** |
-| `09 d0` companion | Not required for per-key colours; read-only except explicit restore | Byte offset unverified; 2026-11-03 single-byte matrix showed no observable effect; experimental write path removed |
+| `09 d0` companion | Not required for per-key colours. Read by `config dump`; written only by `config restore --custom`. Byte offset unverified; 2026-11-03 single-byte matrix showed no observable effect; experimental write path removed |
 | Read-back backup for report 6 | **Confirmed via mailbox** (`89 cc`); `set --from-device` uses it |
 | Config read/write (`83 c6` / `03 c6`) | **Confirmed:** 136-byte no-op round trip |
 | Effect palette (`88 c8` / `08 c8`) | **Confirmed:** 441-byte round trip |
@@ -444,7 +447,9 @@ The capture and hardware-write gates are closed. Remaining work:
    [FINDINGS.md](FINDINGS.md) §12.
 2. Optional: daemon/IPC or reactive key effects (out of the current scope).
 
-Do not send `09 d0`, `03 c6`, or `04 d8` unless a new, captured need appears.
+Normal lighting control uses the captured `09 cc`, `03 c6` and `08 c8`
+shapes. Do not send `04 d8` or an arbitrary `09 d0` payload unless a new,
+captured need appears; `09 d0` is only written by `config restore --custom`.
 
 ## 14. Lighting configuration and effects
 

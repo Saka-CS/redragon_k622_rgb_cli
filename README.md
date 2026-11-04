@@ -10,6 +10,9 @@ the exact report shapes captured from the official software.
 
 ## Status
 
+Current release: `k622rgb` `0.5.0` (246 unit tests pass with
+`python3 -m unittest discover -s tests -v`).
+
 Everything below is implemented and was verified on the physical keyboard:
 
 - Per-key colours through the captured report-0x06 `09 cc` frame.
@@ -249,7 +252,7 @@ bottom row and the 36 dead slots.
   responses.
 - Writes are refused unless the IF1 descriptor matches the captured K622 hash.
 - No firmware update, bootloader, flash, keymap or macro path exists.
-- Config/palette writes back up the current state first.
+- Config/palette writes back up the current state first (unless `--no-backup`).
 
 ## Troubleshooting
 

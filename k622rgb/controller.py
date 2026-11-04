@@ -627,9 +627,11 @@ def _map_write_error(exc: OSError) -> DeviceError:
 
 
 def write_feature(fd: int, packet) -> int:
-    """Send one validated lighting frame with ``HIDIOCSFEATURE``.
+    """Send one validated per-key ``09 cc`` frame with ``HIDIOCSFEATURE``.
 
-    This is the only write path in the package. It refuses every packet whose
+    This is the per-key colour write path. The module also has validated
+    writers for the ``03 c6`` config, the ``08 c8`` effect palette and the
+    ``09 cc``/``09 d0`` custom frames. This function refuses every packet whose
     header is not the captured ``09 cc 00 40`` header or whose bytes outside
     the colour planes differ from the captured template.
     """

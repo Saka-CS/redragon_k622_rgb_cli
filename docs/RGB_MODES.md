@@ -1,8 +1,9 @@
 # RGB modes and configuration — Redragon K622
 
-Everything on this page was verified on the physical K622 on 2026-11-01.
-The official `KeyboardDrv.exe` (V1.6.6) was also run under Wine 11 to confirm
-the mode list and the UI option set.
+Everything on this page was verified on the physical K622: the main pass was
+2026-11-01, with later checks as noted (the `09 d0` matrix is 2026-11-03). The
+official `KeyboardDrv.exe` (V1.6.6) was also run under Wine 11 to confirm the
+mode list and the UI option set.
 
 ## 1. Feature set
 
@@ -17,7 +18,8 @@ The official lighting tab exposes exactly these RGB options:
 | Colour | custom RGB | written to palette entry 0 for the selected mode |
 | Light | on/off | UI master switch; **OFF** is also a mode |
 
-The RGB set is the **87 main keys only**. The G1–G4, MR, RGB toggle,
+The RGB set is the **87 main keys plus the three addressable Redragon logo
+zones** (`LogoLeft`, `LogoCenter`, `LogoRight`). The G1–G4, MR, RGB toggle,
 Previous, Play/Pause, Next, Mute and volume roller do **not** have
 individually addressable RGB LEDs; they stayed dark in both Fixed_on and
 Self-define modes. See [KEYMAP.md](KEYMAP.md).
@@ -97,7 +99,7 @@ Layout of the 136-byte block:
 | `0x0C` | per-key flag (`1` for Self-define, otherwise `0`) |
 | `0x0D` | current mode (`0`–`21`) |
 | `0x1E + 2*(mode-1)` | effect colour byte (`0`–`6`, `7` = random) |
-| `0x1F + 2*(mode-1)` | speed/brightness byte: `(speed << 4) | brightness` |
+| `0x1F + 2*(mode-1)` | speed/brightness byte: `(speed << 4)` OR `brightness` |
 | `0x46` or `0x81` | `5a a5` marker. The older 20-mode layout uses `0x46`; the factory-default layout extends the mode table and uses `0x81`. Both are accepted. |
 
 The 20 effect parameter pairs used by the K622 occupy `0x1E..0x45`; the
@@ -172,9 +174,10 @@ written by `09 cc` byte-for-byte. `k622rgb set --from-device` uses this as its
 base, so successive `set` calls remain additive even after a reboot or after
 the official app changed the frame.
 
-The second custom table, `09 d0` / `89 d0`, is read by
-`k622rgb config dump` but not written by the normal CLI. It is not needed for
-per-key colours. A 2026-11-03 hardware matrix found no observable rendering,
+The second custom table, `09 d0` / `89 d0`, is read by `k622rgb config dump`
+and written only by `k622rgb config restore --custom` when the backup contains
+it. It is not needed for per-key colours; the normal `set` path writes only
+`09 cc`. A 2026-11-03 hardware matrix found no observable rendering,
 persistence or group effect from single-byte `09 d0` writes, so the
 experimental `set --game-flag` path was removed.
 
@@ -183,7 +186,8 @@ experimental `set --game-flag` path was removed.
 
 Config and palette writes are applied immediately and persist across a
 replug/power cycle (the official app uses the same writes and no separate
-"save" step). Every write command takes a full backup first:
+"save" step). Every write command takes a full read-back backup first unless
+`--no-backup` is given:
 
 ```bash
 k622rgb config dump                 # timestamped backup in the XDG state dir
@@ -202,6 +206,10 @@ custom2-response.bin  1032-byte 89 d0 response
 profile-response.bin  1032-byte 84 d8 response (read-only; keymaps/macros)
 meta.json
 ```
+
+That is the full file set written by `config dump`. The automatic backup
+taken before a write contains `config-response.bin`, `colors-response.bin`
+and `meta.json` only.
 
 ## 7. CLI examples
 

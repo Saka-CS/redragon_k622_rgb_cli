@@ -10,7 +10,7 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 | [FINDINGS.md](FINDINGS.md) | Device identification, official-software analysis, hardware recon evidence, open questions |
 | [PROTOCOL.md](PROTOCOL.md) | USB/HID details, declared reports, verified read/write paths, config mailbox |
 | [RGB_MODES.md](RGB_MODES.md) | All 20 effects, Self-define/OFF, brightness/speed, palette, per-key frames |
-| [KEYMAP.md](KEYMAP.md) | Main-key LED map, duplicate/dead slots, extra-key finding |
+| [KEYMAP.md](KEYMAP.md) | Main-key LED map, logo/alias/dead slots, extra-key finding |
 | [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | Phased plan, architecture, CLI, testing, acceptance criteria |
 
 ## Status
@@ -30,17 +30,20 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 - Built-in effects, brightness/speed, effect palette and Self-define/OFF:
   **implemented and verified on hardware** (config `03 c6` round trip,
   `08 c8` palette write, `05 83 c6`/`05 88 c8` reads).
+- Local lighting profiles and timestamped config/palette backups:
+  **implemented and verified on hardware**.
 - Official UI: **verified under Wine 11** (mode list, sliders, colour picker).
 - Extra keys: **not RGB**. G1-G4, MR, the RGB toggle and the media buttons
   stayed dark in both Fixed_on and Self-define modes. `Cfg.ini` has no `[KEY]`
   entries for them.
 - Packet-slot map: **verified by a full 126-slot sweep and a key-name verify
   pass**. The RGB set is the 87 main keys plus three addressable Redragon logo
-  zones (`LogoLeft`, `LogoCenter`, `LogoRight`). There are no aliases and 36
-  dead slots. The corrected bottom row puts `Z` at 86, `X` at 87, `C` at 88,
+  zones (`LogoLeft`, `LogoCenter`, `LogoRight`). There are no alias slots and
+  36 dead slots. The corrected bottom row puts `Z` at 86, `X` at 87, `C` at 88,
   and `/` at 95.
+- Project state: `k622rgb` `0.5.0`; 246 unit tests pass with
+  `python3 -m unittest discover -s tests -v`.
 - Remaining work: dynamic/reactive effects, a daemon, or a GUI.
-- Commits: hardware gate passed.
 
 ## Short version
 
@@ -59,8 +62,8 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 - 20 effects + Self-define + OFF; brightness `0–9`; speed `1–4`; random or
   one of seven palette colours per effect.
 - Safety: only declared reports and captured K622 frames; no firmware,
-  bootloader, macro or keymap writes. Every config/palette write backs up
-  first.
+  bootloader, macro or keymap writes. Every config/palette write backs up first
+  unless `--no-backup` is given.
 
 ## Commands
 
@@ -160,14 +163,15 @@ per-key frame. The group store is `~/.config/k622rgb/groups.json`
 (respecting `XDG_CONFIG_HOME`; override with `--file` or `K622RGB_GROUP_FILE`
 for both the `group` subcommands and `set --group`).
 
-`info`, `dump`, `check`, and `list` are read-only. `set` sends the captured
-`09 cc` report-6 frame and switches to Self-define mode by default (use
-`--no-activate` to skip that). `mode`, `color`, `config` and `off` use the
-verified configuration mailbox (`05 83 c6` / `05 88 c8`) and the captured
-`03 c6` / `08 c8` write shapes. Every config/palette write saves a full backup
-first. `set` saves the frame it last wrote under the XDG state directory so
-successive calls are additive; `set --from-device` instead reads the custom
-frame back from the keyboard.
+`info`, `dump`, `check`, `list`, `config show` and `config dump` are read-only.
+`set` sends the captured `09 cc` report-6 frame and switches to Self-define
+mode by default (use `--no-activate` to skip that). `mode`, `color`, `off`,
+`config restore` and `profile load` use the verified configuration mailbox
+(`05 83 c6` / `05 88 c8`) and the captured `03 c6` / `08 c8` / custom-frame
+write shapes. Every config/palette write saves a full backup first unless
+`--no-backup` is given. `set` saves the frame it last wrote under the XDG state
+directory so successive calls are additive; `set --from-device` instead reads
+the custom frame back from the keyboard.
 
 `dump --report 6` still fails with `EPIPE` when sent without the vendor
 handshake. The mailbox commands above are the supported read path; the tool
