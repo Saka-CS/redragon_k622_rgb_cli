@@ -192,6 +192,7 @@ Every config or palette write is preceded by a full read-back backup unless
 ./bin/k622rgb config show                 # current config and palette
 ./bin/k622rgb config dump                 # timestamped full backup
 ./bin/k622rgb config dump --out ./backup
+./bin/k622rgb config seal ./backup        # add hashes to a legacy backup
 ./bin/k622rgb config restore ./backup     # restore config + palette
 ./bin/k622rgb config restore ./backup --custom  # also restore frames
 

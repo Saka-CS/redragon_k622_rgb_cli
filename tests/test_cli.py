@@ -1,12 +1,13 @@
 import contextlib
 import io
+import json
 import os
 import shutil
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from k622rgb import cli, controller, groups, layout
+from k622rgb import cli, controller, groups, layout, state
 
 FIXTURE = Path(__file__).parent / "data" / "k622-if1-descriptor.bin"
 
@@ -643,6 +644,131 @@ class CliTests(unittest.TestCase):
         self.assertIn("not", err.lower())
         opener.assert_not_called()
         writer.assert_not_called()
+
+    # -- config backups --------------------------------------------------
+
+    def make_legacy_backup(self):
+        path = self.root / "legacy-backup"
+        path.mkdir()
+        files = {
+            "config-response.bin": bytes((0x06,)) + bytes(261),
+            "colors-response.bin": bytes((0x06,)) + bytes(1031),
+        }
+        for name, data in files.items():
+            (path / name).write_bytes(data)
+        meta = {
+            "kind": "config dump",
+            "descriptor_sha256": "abc123",
+            "created": "2026-01-01T00:00:00Z",
+            "tool": "k622rgb test",
+        }
+        (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        return path, files, meta
+
+    def test_config_seal_adds_hashes_and_preserves_metadata(self):
+        path, files, meta = self.make_legacy_backup()
+
+        code, out, err, opener, _reader, _writer = self.run_cli(
+            ["config", "seal", str(path)]
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("warning", err)
+        self.assertIn("sealed:", out)
+        opener.assert_not_called()
+        sealed = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(sealed["version"], 2)
+        self.assertEqual(sealed["files"], state.files_manifest(files))
+        for key, value in meta.items():
+            self.assertEqual(sealed[key], value)
+        verified_meta, verified_files = state.verify_backup_dir(
+            str(path),
+            required=tuple(files),
+            descriptor_sha256="abc123",
+        )
+        self.assertEqual(verified_meta["descriptor_sha256"], "abc123")
+        self.assertEqual(verified_files, files)
+
+    def test_config_seal_requires_force_to_reseal(self):
+        path, files, _meta = self.make_legacy_backup()
+        self.run_cli(["config", "seal", str(path)])
+
+        (path / "config-response.bin").write_bytes(b"changed")
+        code, _out, err, _opener, _reader, _writer = self.run_cli(
+            ["config", "seal", str(path)]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("--force", err)
+        with self.assertRaises(state.BackupError):
+            state.verify_backup_dir(str(path))
+
+        code, out, _err, _opener, _reader, _writer = self.run_cli(
+            ["config", "seal", str(path), "--force"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("sealed:", out)
+        changed = dict(files)
+        changed["config-response.bin"] = b"changed"
+        sealed = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(sealed["files"], state.files_manifest(changed))
+        state.verify_backup_dir(str(path), required=tuple(changed))
+
+    def test_config_seal_does_not_open_device(self):
+        path, _files, _meta = self.make_legacy_backup()
+
+        code, _out, _err, opener, reader, writer = self.run_cli(
+            ["config", "seal", str(path)]
+        )
+
+        self.assertEqual(code, 0)
+        opener.assert_not_called()
+        reader.assert_not_called()
+        writer.assert_not_called()
+
+    def test_config_dump_manifest_has_hashes(self):
+        out_dir = self.root / "dump"
+        config_response = bytes((0x06,)) + bytes(range(255)) + bytes(6)
+
+        def fake_mailbox_read(_fd, command, *args, **kwargs):
+            return bytes((0x06,)) + command + bytes(1032 - 1 - len(command))
+
+        expected = {
+            "config-response.bin",
+            "colors-response.bin",
+            "custom1-response.bin",
+            "custom2-response.bin",
+            "profile-response.bin",
+        }
+        with mock.patch(
+            "k622rgb.cli.controller.read_config_response",
+            return_value=config_response,
+        ), mock.patch(
+            "k622rgb.cli.controller.mailbox_read",
+            side_effect=fake_mailbox_read,
+        ), mock.patch(
+            "k622rgb.cli.os.close"
+        ):
+            code, out, err, opener, _reader, _writer = self.run_cli(
+                ["config", "dump", "--out", str(out_dir), "--device", self.node]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertIn("dump:", out)
+        opener.assert_called_once_with(self.node, writable=True)
+        meta = json.loads((out_dir / "meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(meta["version"], 2)
+        self.assertEqual(set(meta["files"]), expected)
+        self.assertEqual(
+            meta["descriptor_sha256"], controller.K622_DESCRIPTOR_SHA256
+        )
+        _verified_meta, files = state.verify_backup_dir(
+            str(out_dir),
+            required=tuple(expected),
+            descriptor_sha256=controller.K622_DESCRIPTOR_SHA256,
+        )
+        self.assertEqual(set(files), expected)
+        self.assertEqual(files["config-response.bin"], config_response)
 
     # -- argparse --------------------------------------------------------
 

@@ -73,6 +73,7 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 ./bin/k622rgb dump --report 5 --out /tmp/k622/rep5.bin
 ./bin/k622rgb config show     # current mode, parameters and palette
 ./bin/k622rgb config dump     # full lighting backup (config, palette, frames)
+./bin/k622rgb config seal ./backup   # add SHA-256 hashes to a legacy backup
 ./bin/k622rgb config restore ./backup
 ./bin/k622rgb mode list       # all 20 effects + Self-define + OFF
 ./bin/k622rgb mode set static --color ff0000 --brightness 9

@@ -468,6 +468,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     config_dump.set_defaults(func=cmd_config_dump)
 
+    config_seal = config_sub.add_parser(
+        "seal",
+        help="add per-file SHA-256 hashes to an existing backup",
+        description=(
+            "Hash the files already present in a backup directory and write "
+            "them to meta.json. This migrates a legacy backup made before "
+            "hash manifests existed. It trusts the current directory contents "
+            "and never opens the device."
+        ),
+    )
+    _add_global_flags(config_seal, suppress_defaults=True)
+    config_seal.add_argument(
+        "path", metavar="DIR", help="backup directory to seal"
+    )
+    config_seal.add_argument(
+        "--force",
+        action="store_true",
+        help="re-seal a backup that already has a file manifest",
+    )
+    config_seal.set_defaults(func=cmd_config_seal)
+
     config_show = config_sub.add_parser(
         "show", help="read and print the current configuration"
     )
@@ -1708,7 +1729,8 @@ def _write_dump_dir(path: str, files: Dict[str, bytes], meta: dict) -> None:
         with open(os.path.join(path, name), "wb") as handle:
             handle.write(data)
     meta = dict(meta)
-    meta.setdefault("version", 1)
+    meta["version"] = 2
+    meta["files"] = state.files_manifest(files)
     with open(os.path.join(path, "meta.json"), "w", encoding="utf-8") as handle:
         json.dump(meta, handle, indent=2, sort_keys=True)
         handle.write("\n")
@@ -1755,6 +1777,33 @@ def cmd_config_dump(args: argparse.Namespace) -> int:
     if args.hex:
         print()
         _print_packet_hex(controller.config_from_response(files["config-response.bin"]))
+    return EXIT_OK
+
+
+def cmd_config_seal(args: argparse.Namespace) -> int:
+    path = os.path.expanduser(args.path)
+    meta, files = state.read_backup_dir(path)
+    if "files" in meta and not args.force:
+        print(
+            "k622rgb: %s already has a file manifest; use --force to re-seal it"
+            % path,
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    print(
+        "warning: sealing trusts the current contents of %s; it does not "
+        "verify them against the device" % path,
+        file=sys.stderr,
+    )
+    if args.dry_run:
+        print("dry run: would update %s" % os.path.join(path, "meta.json"))
+        return EXIT_OK
+    meta["version"] = 2
+    meta["files"] = state.files_manifest(files)
+    state.write_backup_meta(path, meta)
+    print("sealed: %s" % path)
+    for name in sorted(files):
+        print("  %-24s %d bytes" % (name, len(files[name])))
     return EXIT_OK
 
 
@@ -2038,6 +2087,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         return args.func(args)
     except controller.DeviceError as exc:
+        print("k622rgb: %s" % exc, file=sys.stderr)
+        return EXIT_ERROR
+    except state.BackupError as exc:
         print("k622rgb: %s" % exc, file=sys.stderr)
         return EXIT_ERROR
     except state.StateError as exc:
