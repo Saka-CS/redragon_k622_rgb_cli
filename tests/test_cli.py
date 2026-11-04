@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from k622rgb import cli, controller, groups, layout, state
+from k622rgb import cli, controller, groups, layout, profiles, state
 
 FIXTURE = Path(__file__).parent / "data" / "k622-if1-descriptor.bin"
 
@@ -824,6 +824,7 @@ class CliTests(unittest.TestCase):
         write_palette_effect=None,
         write_config_effect=None,
         write_custom_effect=None,
+        restore_custom_effect=None,
         read_custom_return=None,
         read_custom_side_effect=None,
     ):
@@ -837,6 +838,9 @@ class CliTests(unittest.TestCase):
             "k622rgb.cli.controller.write_custom_frame",
             side_effect=write_custom_effect,
         ) as write_custom, mock.patch(
+            "k622rgb.cli.controller.restore_custom_frame",
+            side_effect=restore_custom_effect,
+        ) as restore_custom, mock.patch(
             "k622rgb.cli.controller.read_custom_frame",
             return_value=read_custom_return,
             side_effect=read_custom_side_effect,
@@ -856,6 +860,7 @@ class CliTests(unittest.TestCase):
             "write_palette": write_palette,
             "write_config": write_config,
             "write_custom": write_custom,
+            "restore_custom": restore_custom,
             "read_custom": read_custom,
         }
 
@@ -898,6 +903,7 @@ class CliTests(unittest.TestCase):
         result["write_palette"].assert_not_called()
         result["write_config"].assert_not_called()
         result["write_custom"].assert_not_called()
+        result["restore_custom"].assert_not_called()
 
     def test_config_restore_custom_requires_descriptor(self):
         path, files, meta = self.make_restore_backup()
@@ -982,6 +988,9 @@ class CliTests(unittest.TestCase):
         def write_custom(_fd, _payload, which):
             order.append("custom%d" % which)
 
+        def restore_custom(_fd, _payload):
+            order.append("custom2")
+
         expected = files["custom2-response.bin"][8:]
         result = self.run_restore(
             ["config", "restore", "--custom", "--yes", str(path)],
@@ -989,12 +998,15 @@ class CliTests(unittest.TestCase):
             write_palette_effect=write_palette,
             write_config_effect=write_config,
             write_custom_effect=write_custom,
+            restore_custom_effect=restore_custom,
             read_custom_return=expected,
         )
 
         self.assertEqual(result["code"], 0)
         self.assertEqual(order, ["palette", "config", "custom1", "custom2"])
         self.assertIn("restored:", result["out"])
+        self.assertEqual(result["write_custom"].call_count, 1)
+        self.assertEqual(result["restore_custom"].call_count, 1)
 
     def test_config_restore_readback_mismatch_rolls_back(self):
         path, _files, _meta = self.make_restore_backup()
@@ -1006,14 +1018,13 @@ class CliTests(unittest.TestCase):
         )
         d0_payloads = []
 
-        def write_custom(_fd, payload, which):
-            if which == 2:
-                d0_payloads.append(payload)
+        def restore_custom(_fd, payload):
+            d0_payloads.append(payload)
 
         result = self.run_restore(
             ["config", "restore", "--custom", "--yes", str(path)],
             backup_return=str(prebackup),
-            write_custom_effect=write_custom,
+            restore_custom_effect=restore_custom,
             read_custom_side_effect=[b"\x00" * 1024, rollback_payload],
         )
 
@@ -1021,6 +1032,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(d0_payloads), 2)
         self.assertEqual(d0_payloads[0], b"\x22" * 1024)
         self.assertEqual(d0_payloads[1], rollback_payload)
+        self.assertEqual(result["restore_custom"].call_count, 2)
         self.assertEqual(result["read_custom"].call_count, 2)
         self.assertIn("rolled back", result["err"])
         self.assertIn("not rolled back", result["err"])
@@ -1045,6 +1057,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(calls, [1])
         self.assertEqual(result["write_custom"].call_count, 1)
         self.assertEqual(result["write_config"].call_count, 1)
+        result["restore_custom"].assert_not_called()
         self.assertIn("broken pipe", result["err"])
         self.assertIn("pre-restore backup", result["err"])
         self.assertIn("before the 09 d0 write", result["err"])
@@ -1057,13 +1070,16 @@ class CliTests(unittest.TestCase):
 
         def write_custom(_fd, _payload, which):
             calls.append(which)
-            if which == 2:
-                raise controller.DeviceError("broken pipe (EPIPE)")
+
+        def restore_custom(_fd, _payload):
+            calls.append(2)
+            raise controller.DeviceError("broken pipe (EPIPE)")
 
         result = self.run_restore(
             ["config", "restore", "--custom", "--yes", str(path)],
             backup_return=str(self.root / "prebackup"),
             write_custom_effect=write_custom,
+            restore_custom_effect=restore_custom,
         )
 
         self.assertEqual(result["code"], 1)
@@ -1076,19 +1092,19 @@ class CliTests(unittest.TestCase):
         path, _files, _meta = self.make_restore_backup()
         d0_payloads = []
 
-        def write_custom(_fd, payload, which):
-            if which == 2:
-                d0_payloads.append(payload)
+        def restore_custom(_fd, payload):
+            d0_payloads.append(payload)
 
         result = self.run_restore(
             ["config", "restore", "--custom", "--yes", str(path)],
             backup_return=str(self.root / "prebackup"),
-            write_custom_effect=write_custom,
+            restore_custom_effect=restore_custom,
             read_custom_side_effect=controller.DeviceError("read failed"),
         )
 
         self.assertEqual(result["code"], 1)
         self.assertEqual(len(d0_payloads), 1)
+        self.assertEqual(result["restore_custom"].call_count, 1)
         self.assertEqual(result["read_custom"].call_count, 1)
         self.assertIn("read-back failed", result["err"])
         self.assertIn("docs/SAFETY.md", result["err"])
@@ -1110,6 +1126,25 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result["code"], 130)
         self.assertEqual(calls, [1])
         self.assertIn("interrupted", result["err"])
+        result["restore_custom"].assert_not_called()
+        result["read_custom"].assert_not_called()
+
+    def test_config_restore_interrupt_during_d0_prints_recovery(self):
+        path, _files, _meta = self.make_restore_backup()
+
+        def restore_custom(_fd, _payload):
+            raise KeyboardInterrupt
+
+        result = self.run_restore(
+            ["config", "restore", "--custom", "--yes", str(path)],
+            backup_return=str(self.root / "prebackup"),
+            restore_custom_effect=restore_custom,
+        )
+
+        self.assertEqual(result["code"], 130)
+        self.assertEqual(result["restore_custom"].call_count, 1)
+        self.assertIn("interrupted", result["err"])
+        self.assertIn("did not respond after the 09 d0", result["err"])
         result["read_custom"].assert_not_called()
 
     def test_config_restore_verify_only_does_not_open_device(self):
@@ -1189,7 +1224,8 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result["code"], 0)
         self.assertIn("legacy backup has no hashes", result["err"])
-        self.assertEqual(result["write_custom"].call_count, 2)
+        self.assertEqual(result["write_custom"].call_count, 1)
+        self.assertEqual(result["restore_custom"].call_count, 1)
         self.assertIn("restored:", result["out"])
 
     def test_config_restore_custom_accepts_verified_backup(self):
@@ -1204,12 +1240,13 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result["code"], 0)
         self.assertIn("restored: %s" % path, result["out"])
-        self.assertEqual(result["write_custom"].call_count, 2)
+        self.assertEqual(result["write_custom"].call_count, 1)
         self.assertEqual(
             result["write_custom"].call_args_list[0].args[2], 1
         )
+        self.assertEqual(result["restore_custom"].call_count, 1)
         self.assertEqual(
-            result["write_custom"].call_args_list[1].args[2], 2
+            result["restore_custom"].call_args_list[0].args[1], expected
         )
 
     def test_config_restore_plain_directory_still_works(self):
@@ -1222,6 +1259,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result["code"], 0)
         self.assertEqual(result["write_config"].call_count, 1)
         result["write_custom"].assert_not_called()
+        result["restore_custom"].assert_not_called()
         self.assertIn("restored: %s" % path, result["out"])
 
     def test_config_restore_plain_single_file_still_works(self):
@@ -1234,7 +1272,69 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result["write_config"].call_count, 1)
         result["write_palette"].assert_not_called()
         result["write_custom"].assert_not_called()
+        result["restore_custom"].assert_not_called()
         self.assertIn("restored: %s" % path, result["out"])
+
+    def test_normal_commands_never_write_custom2(self):
+        config_response = bytes(8) + self.make_config_block()
+        palette = bytes(controller.COLOR_TABLE_SIZE)
+        palette_response = bytes(8) + palette
+        profile_dir = self.root / "profiles"
+        profiles.save_profile(
+            "daily",
+            self.make_config_block(),
+            palette,
+            b"\x11" * controller.CUSTOM_PAYLOAD_SIZE,
+            str(profile_dir),
+        )
+        group_file = str(self.root / "groups.json")
+        local = {}
+        groups.update_local_group(local, "define1", (255, 0, 0))
+        groups.save_local_groups(local, group_file)
+
+        commands = [
+            ["set", "--no-activate", "--no-state", "Esc=red"],
+            [
+                "group", "apply", "1", "--file", group_file,
+                "--no-activate", "--state", str(self.root / "group.bin"),
+            ],
+            ["mode", "set", "static", "--no-backup"],
+            ["off", "--no-backup"],
+            ["color", "set", "static", "0", "ff0000", "--no-backup"],
+            ["profile", "load", "daily", "--dir", str(profile_dir)],
+        ]
+
+        with mock.patch(
+            "k622rgb.cli.controller.read_config_response",
+            return_value=config_response,
+        ), mock.patch(
+            "k622rgb.cli.controller.mailbox_read",
+            return_value=palette_response,
+        ), mock.patch(
+            "k622rgb.cli.controller.write_config",
+            return_value=1032,
+        ), mock.patch(
+            "k622rgb.cli.controller.write_effect_palette",
+            return_value=1032,
+        ), mock.patch(
+            "k622rgb.cli.controller.write_custom_frame",
+            return_value=1032,
+        ) as write_custom, mock.patch(
+            "k622rgb.cli.controller.restore_custom_frame",
+            return_value=1032,
+        ) as restore_custom, mock.patch("k622rgb.cli.os.close"):
+            for argv in commands:
+                with self.subTest(argv=argv):
+                    code, out, err, _opener, _reader, _writer = self.run_cli(
+                        argv
+                    )
+                    self.assertEqual(code, 0, err)
+                    self.assertIn("device:", out)
+
+        restore_custom.assert_not_called()
+        self.assertTrue(write_custom.called)
+        for call in write_custom.call_args_list:
+            self.assertEqual(call.args[2], 1)
 
     # -- argparse --------------------------------------------------------
 

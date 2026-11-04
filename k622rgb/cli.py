@@ -1957,7 +1957,7 @@ def _rollback_custom2(fd, pre_backup: Optional[str]) -> bool:
         return False
 
     try:
-        controller.write_custom_frame(fd, payload, 2)
+        controller.restore_custom_frame(fd, payload)
         time.sleep(0.05)
         actual = controller.read_custom_frame(fd, 2)
     except (controller.DeviceError, OSError) as exc:
@@ -2220,7 +2220,7 @@ def cmd_config_restore(args: argparse.Namespace) -> int:
                 controller.write_custom_frame(fd, custom1_payload, 1)
                 time.sleep(0.05)
                 d0_attempted = True
-                controller.write_custom_frame(fd, custom2_payload, 2)
+                controller.restore_custom_frame(fd, custom2_payload)
                 time.sleep(0.05)
                 try:
                     actual_custom2 = controller.read_custom_frame(fd, 2)

@@ -1197,13 +1197,38 @@ def build_custom_packet(payload, which: int = 1) -> bytes:
     return bytes(packet)
 
 
-def write_custom_frame(fd: int, payload, which: int = 1) -> int:
+def _write_custom_frame(fd: int, payload, which: int) -> int:
     packet = build_custom_packet(payload, which)
     buffer = bytearray(packet)
     try:
         return fcntl.ioctl(fd, hidiocsfeature(len(buffer)), buffer)
     except OSError as exc:
         raise _map_write_error(exc) from exc
+
+
+def write_custom_frame(fd: int, payload, which: int = 1) -> int:
+    """Write a ``09 cc`` (per-key) custom frame.
+
+    Only the ``09 cc`` frame is reachable here. The ``09 d0`` table is
+    persistent firmware state and must only be written by
+    :func:`restore_custom_frame` from a verified backup.
+    """
+    if which != 1:
+        raise ValueError(
+            "write_custom_frame only writes the 09 cc custom frame (which=1); "
+            "refusing which=%r. Use restore_custom_frame for the 09 d0 frame."
+            % (which,)
+        )
+    return _write_custom_frame(fd, payload, 1)
+
+
+def restore_custom_frame(fd: int, payload) -> int:
+    """Write a verified ``09 d0`` payload.
+
+    Only ``config restore --custom`` may call this. Arbitrary ``09 d0`` writes
+    can leave the firmware unable to enumerate; see docs/SAFETY.md.
+    """
+    return _write_custom_frame(fd, payload, 2)
 
 
 def palette_from_response(response) -> bytes:

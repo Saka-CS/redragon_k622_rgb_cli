@@ -425,6 +425,52 @@ class ReadFeatureTests(unittest.TestCase):
                 controller.read_feature(7, 0x06, 1031)
 
 
+class CustomFrameWriteTests(unittest.TestCase):
+    def setUp(self):
+        self.payload = bytes(range(256)) * 4
+
+    def test_write_custom_frame_rejects_d0_before_ioctl(self):
+        with mock.patch("k622rgb.controller.fcntl.ioctl") as ioctl:
+            with self.assertRaises(ValueError) as ctx:
+                controller.write_custom_frame(7, self.payload, 2)
+        ioctl.assert_not_called()
+        self.assertIn("restore_custom_frame", str(ctx.exception))
+        self.assertIn("09 d0", str(ctx.exception))
+
+    def test_write_custom_frame_sends_the_09_cc_packet(self):
+        with mock.patch(
+            "k622rgb.controller.fcntl.ioctl", return_value=1032
+        ) as ioctl:
+            result = controller.write_custom_frame(7, self.payload, 1)
+        self.assertEqual(result, 1032)
+        args = ioctl.call_args.args
+        self.assertEqual(args[0], 7)
+        self.assertEqual(args[1], controller.hidiocsfeature(1032))
+        self.assertEqual(
+            bytes(args[2]), controller.build_custom_packet(self.payload, 1)
+        )
+        self.assertEqual(bytes(args[2])[:4], bytes.fromhex("06 09 cc 00"))
+
+    def test_restore_custom_frame_sends_the_09_d0_packet(self):
+        with mock.patch(
+            "k622rgb.controller.fcntl.ioctl", return_value=1032
+        ) as ioctl:
+            result = controller.restore_custom_frame(7, self.payload)
+        self.assertEqual(result, 1032)
+        args = ioctl.call_args.args
+        self.assertEqual(args[1], controller.hidiocsfeature(1032))
+        self.assertEqual(
+            bytes(args[2]), controller.build_custom_packet(self.payload, 2)
+        )
+        self.assertEqual(bytes(args[2])[:4], bytes.fromhex("06 09 d0 00"))
+
+    def test_restore_custom_frame_maps_write_errors(self):
+        error = OSError(errno.EACCES, "Permission denied")
+        with mock.patch("k622rgb.controller.fcntl.ioctl", side_effect=error):
+            with self.assertRaises(controller.PermissionDenied):
+                controller.restore_custom_frame(7, self.payload)
+
+
 class OpenDeviceTests(unittest.TestCase):
     def test_opens_read_only_by_default(self):
         with mock.patch("k622rgb.controller.os.open", return_value=9) as opener:
