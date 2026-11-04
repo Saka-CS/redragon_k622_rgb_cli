@@ -7,8 +7,10 @@ keyboard, modeled on
 > **Current state (2026-11-04): implemented.** `k622rgb` `0.5.0` provides
 > per-key frames, colour groups, all 20 built-in effects plus Self-define/OFF,
 > the effect palette, config/palette backups and restore, and local profiles.
-> The suite has 246 passing unit tests. The command reference is section 5;
-> the phase plan in section 10 is historical.
+> The suite has 288 passing unit tests. The command reference is section 5;
+> the phase plan in section 10 is historical. Hardware writes are governed by
+> [SAFETY.md](SAFETY.md); the 2026-11-03 `09 d0` sweep is recorded in
+> [INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md).
 
 > **Status note (2026-11-01): the original premises are superseded.**
 > The K622's IF1 descriptor declares only feature reports `0x05` (5 B) and
@@ -237,12 +239,22 @@ def write_feature(fd: int, packet) -> int:
 
 - The only writable report is report `0x06`.
 - Reads use report `0x05` mailbox commands or report `0x06` responses.
-- Only the captured `09 cc`, `03 c6`, `08 c8` and custom-frame shapes can be
-  sent; there is no generic "send arbitrary feature report" entry point.
+- Only the exact captured `09 cc`, `03 c6`, `08 c8` and custom-frame shapes
+  can be sent; there is no generic "send arbitrary feature report" entry
+  point and no offset/value path.
+- **No arbitrary `09 d0` writes.** Never write unknown/reserved offsets or a
+  whole d0 table. `config restore --custom` is the only d0 writer; it requires
+  a verified manifest, a descriptor match, `--yes`, and a pre-restore backup
+  that includes the custom frames. `--no-backup` is refused with `--custom`,
+  d0 is written last, and it is read back afterwards. Normal commands cannot
+  reach it.
 - Config/palette writes are preceded by a full read-back backup unless
   `--no-backup` is given.
-- Errors are raised, never silently retried with a different report ID.
+- Errors are raised, never silently retried with a different report ID. Stop
+  on the first `EPIPE`, disconnect or re-enumeration.
 - No driver detach, no `libusb`, no root daemon.
+- SHA-256 manifests are integrity checks, not provenance; `config seal`
+  trusts the current directory contents. See [SAFETY.md](SAFETY.md).
 
 ## 5. CLI
 
@@ -253,13 +265,14 @@ def write_feature(fd: int, packet) -> int:
 | `k622rgb info` | Show the HID report descriptor and declared reports |
 | `k622rgb dump --report {5,6}` | Read a declared feature report (read-only) |
 | `k622rgb check` | Verify discovery, permissions and the descriptor hash |
+| `k622rgb doctor` | Read-only device/backup health check and recovery ladder |
 | `k622rgb list [--all]` | Print the main-key LED map with logo zones, aliases and dead slots |
 | `k622rgb set [KEY=COLOR ...]` | Write a per-key frame (`--all`, `--off`, `--reset`, `--from-device`, `--no-activate`, `--brightness 0-9`, `--dry-run`, `--group NAME=COLOR`, `--file FILE`) |
 | `k622rgb group list/set/apply/import` | Manage local colour groups, import vendor `GaoshouKey1..5`, and paint them into a per-key frame |
 | `k622rgb off` | Select the built-in OFF mode |
 | `k622rgb mode list/show/set` | Inspect or select the 20 built-in effects / Self-define / OFF, with brightness, speed, colour or random |
 | `k622rgb color list/show/set` | Inspect or edit the seven-colour effect palette |
-| `k622rgb config dump/show/restore` | Back up, inspect or restore the lighting config, palette and frames |
+| `k622rgb config dump/show/restore/seal` | Back up, inspect, verify, seal or restore the lighting config, palette and frames (`restore --verify-only`, `--custom --yes`, `--allow-unverified`) |
 | `k622rgb profile list/show/save/load/delete` | Manage local lighting profiles |
 
 ### 5.2 Global flags
@@ -301,7 +314,11 @@ Some commands add their own flags (`set --state/--no-state/--hex`,
 
 ./bin/k622rgb config show
 ./bin/k622rgb config dump
+./bin/k622rgb config seal ./backup          # add hashes to a legacy backup
 ./bin/k622rgb config restore ./backup
+./bin/k622rgb config restore --verify-only ./backup
+./bin/k622rgb config restore --custom ./backup --yes
+./bin/k622rgb config restore --custom ./legacy --allow-unverified --yes
 
 ./bin/k622rgb profile save gaming
 ./bin/k622rgb profile load gaming
@@ -357,9 +374,12 @@ state directory, `~/.local/state/k622rgb/` (override with
         └── profile-response.bin
 ```
 
-The full set above is what `config dump` writes. The automatic backup taken
-before a write contains only `meta.json`, `config-response.bin` and
-`colors-response.bin`.
+The full set above is what `config dump` writes. `meta.json` is version 2 and
+contains a `files` map with each file's size and SHA-256; `config seal` adds
+that map to a legacy backup. The automatic backup taken before an ordinary
+write contains only `meta.json`, `config-response.bin` and
+`colors-response.bin`; a `config restore --custom` pre-restore backup also
+includes `custom1-response.bin` and `custom2-response.bin`.
 
 ### 7.2 Profile schema
 
@@ -586,7 +606,8 @@ extra-key aliases were removed.
 | `test_modes.py` | Mode table, config parse/build/validate, palette, factory-reset layout, CLI mode paths |
 | `test_controller.py` | Discovery with fake sysfs, descriptor checks, ioctl numbers, read/write feature shapes, errors |
 | `test_descriptor.py` | Captured descriptor fixture, parser, declared report sizes |
-| `test_cli.py` | Command parsing, exit codes, `set` frames, config/profile commands, `--dry-run` |
+| `test_state.py` | Backup manifests, verification (size/hash/descriptor), legacy unverified handling, sealing |
+| `test_cli.py` | Command parsing, exit codes, `set` frames, config/profile commands, custom-restore safeguards, `--dry-run` |
 
 Run:
 
@@ -604,6 +625,9 @@ python3 -m unittest discover -s tests -v
 - `list` and `slot:N` diagnostics.
 - All 20 effects with brightness/speed/colour/random; check flicker and typing.
 - `config dump` / `config restore` round-trip.
+- `config restore --verify-only` on a known backup, with no device open.
+- Do **not** test `config restore --custom` on hardware unless a verified
+  backup and an ISP/RMA recovery path exist. See [SAFETY.md](SAFETY.md).
 - `profile save` / `profile load` round-trip.
 - Replug and power cycle: discovery and persisted config still work.
 - Permission-denied path: unplug rule or use a non-udev session.
@@ -622,7 +646,8 @@ python3 -m unittest discover -s tests -v
 | Risk | Mitigation |
 |---|---|
 | Unknown descriptor or firmware revision | Descriptor hash check; writes refused before opening the device |
-| Malformed/unsupported write shape | Only captured `09 cc`, `03 c6`, `08 c8` and custom-frame packets; validated first |
+| Malformed/unsupported write shape | Only exact captured `09 cc`, `03 c6`, `08 c8` and custom-frame packets; validated first |
+| Arbitrary `09 d0` write | No offset/value path; `config restore --custom` only, with verified manifest, descriptor match, `--yes`, pre-restore custom-frame backup, read-back and one rollback. See [SAFETY.md](SAFETY.md) |
 | Accidental keymap/macro write | Those report shapes are never built or sent |
 | Extra keys not addressable | Documented limitation; the 87 main keys plus three logo zones still work |
 | Built-in effect overrides per-key frame | `set` switches to Self-define by default; `--no-activate` leaves the mode alone |
@@ -668,12 +693,15 @@ Out of scope for this plan, but natural next steps:
 - ~~Confirming the `09 d0` game byte.~~ Attempted on 2026-11-03 with the
   experimental `set --game-flag` path across Self-define, three nonzero payload
   regions (`6`, `384`, `784`), values `0`/`1`/`255`, d0-only and cc+d0
-  sequences, plus a mode switch and replug. No observable rendering,
-  persistence or group effect was found, so the single-byte game-flag
-  hypothesis is unsupported. The experimental command and its probe tools were
-  removed. The remaining open question is whether the byte affects game-input
-  (key-press) behaviour rather than RGB output. See
-  [FINDINGS.md](FINDINGS.md) §12.
+  sequences, plus a mode switch and replug. No visible rendering, persistence
+  or group change was found. The sweep was then widened to roughly
+  330 offset/value combinations and left a board non-enumerating, so the
+  experimental command and its probe tools were removed. Arbitrary `09 d0`
+  writes are forbidden; only `config restore --custom` writes d0, with a
+  verified backup, descriptor match, `--yes`, and a pre-restore backup. The
+  remaining open question is whether the byte affects game-input (key-press)
+  behaviour rather than RGB output. See [INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md)
+  and [SAFETY.md](SAFETY.md).
 - Keymap/macro editing, if a safe and captured protocol appears.
 - Wireless (Bluetooth/2.4 GHz) and ISO variants.
 - Plugin system for effects.

@@ -12,6 +12,8 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 | [RGB_MODES.md](RGB_MODES.md) | All 20 effects, Self-define/OFF, brightness/speed, palette, per-key frames |
 | [KEYMAP.md](KEYMAP.md) | Main-key LED map, logo/alias/dead slots, extra-key finding |
 | [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) | Phased plan, architecture, CLI, testing, acceptance criteria |
+| [SAFETY.md](SAFETY.md) | Hardware write policy, restore safeguards and recovery ladder |
+| [INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md) | Incident record for the `09 d0` sweep that left a board non-enumerating |
 
 ## Status
 
@@ -23,10 +25,14 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 - Colour groups: **implemented locally** (vendor `Define1..5` import, presets,
   `group apply`, and `set --group` overlays); they reuse the verified `09 cc`
   frame and need no new protocol.
-- `09 d0` game byte: **tested negative** on 2026-11-03 (no observable
-  rendering, persistence or group effect). The experimental `set --game-flag`
-  write path and its probe tools were removed; the remaining open question is
-  whether the byte affects game-input behaviour rather than RGB output.
+- `09 d0` game byte: **tested negative** on 2026-11-03 (the single-byte
+  matrix produced no visible rendering, persistence or group change). The
+  experimental `set --game-flag` write path and its probe tools were removed
+  after the wider sweep left a board non-enumerating; arbitrary `09 d0` writes
+  are forbidden. The remaining open question is whether the byte affects
+  game-input behaviour rather than RGB output. See
+  [INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md) and
+  [SAFETY.md](SAFETY.md).
 - Built-in effects, brightness/speed, effect palette and Self-define/OFF:
   **implemented and verified on hardware** (config `03 c6` round trip,
   `08 c8` palette write, `05 83 c6`/`05 88 c8` reads).
@@ -41,7 +47,7 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
   zones (`LogoLeft`, `LogoCenter`, `LogoRight`). There are no alias slots and
   36 dead slots. The corrected bottom row puts `Z` at 86, `X` at 87, `C` at 88,
   and `/` at 95.
-- Project state: `k622rgb` `0.5.0`; 246 unit tests pass with
+- Project state: `k622rgb` `0.5.0`; 288 unit tests pass with
   `python3 -m unittest discover -s tests -v`.
 - Remaining work: dynamic/reactive effects, a daemon, or a GUI.
 
@@ -61,9 +67,13 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 - Per-key write: report `0x06`, header `06 09 cc 00 40`, 1024 payload bytes.
 - 20 effects + Self-define + OFF; brightness `0–9`; speed `1–4`; random or
   one of seven palette colours per effect.
-- Safety: only declared reports and captured K622 frames; no firmware,
-  bootloader, macro or keymap writes. Every config/palette write backs up first
-  unless `--no-backup` is given.
+- Safety: only declared reports and exact captured K622 shapes are writable;
+  arbitrary `09 d0` writes and unknown/reserved offsets are forbidden. No
+  firmware, bootloader, macro or keymap writes. Every config/palette write
+  backs up first unless `--no-backup` is given; `--no-backup` is refused with
+  `--custom`. `config restore --custom` is the only d0 writer and requires a
+  verified manifest, descriptor match, `--yes`, and a pre-restore backup that
+  includes the custom frames. See [SAFETY.md](SAFETY.md).
 
 ## Commands
 
@@ -76,6 +86,9 @@ Research notes and a pure-stdlib Linux CLI for the per-key RGB lighting of the
 ./bin/k622rgb config dump     # full lighting backup (config, palette, frames)
 ./bin/k622rgb config seal ./backup   # add SHA-256 hashes to a legacy backup
 ./bin/k622rgb config restore ./backup
+./bin/k622rgb config restore --verify-only ./backup
+./bin/k622rgb config restore --custom ./backup --yes   # d0 last; verified backup
+./bin/k622rgb config restore --custom ./legacy --allow-unverified --yes
 ./bin/k622rgb mode list       # all 20 effects + Self-define + OFF
 ./bin/k622rgb mode set static --color ff0000 --brightness 9
 ./bin/k622rgb mode set breathing --color 0000ff --brightness 7 --speed 1
@@ -172,9 +185,15 @@ mode by default (use `--no-activate` to skip that). `mode`, `color`, `off`,
 `config restore` and `profile load` use the verified configuration mailbox
 (`05 83 c6` / `05 88 c8`) and the captured `03 c6` / `08 c8` / custom-frame
 write shapes. Every config/palette write saves a full backup first unless
-`--no-backup` is given. `set` saves the frame it last wrote under the XDG state
-directory so successive calls are additive; `set --from-device` instead reads
-the custom frame back from the keyboard.
+`--no-backup` is given. `config restore --custom` is the only command that
+writes `09 d0`; it requires a verified backup manifest, a descriptor match,
+`--yes`, and a pre-restore backup that includes the custom frames (writing d0
+last and reading it back). `--verify-only` checks a backup without opening the
+device; `config seal` adds hashes to a legacy backup and writes only
+`meta.json`. `set` saves the frame it last wrote under the XDG state directory
+so successive calls are additive; `set --from-device` instead reads the custom
+frame back from the keyboard. The hardware write policy is
+[SAFETY.md](SAFETY.md).
 
 `dump --report 6` still fails with `EPIPE` when sent without the vendor
 handshake. The mailbox commands above are the supported read path; the tool

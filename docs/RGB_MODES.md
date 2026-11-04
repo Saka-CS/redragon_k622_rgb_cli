@@ -175,26 +175,42 @@ base, so successive `set` calls remain additive even after a reboot or after
 the official app changed the frame.
 
 The second custom table, `09 d0` / `89 d0`, is read by `k622rgb config dump`
-and written only by `k622rgb config restore --custom` when the backup contains
-it. It is not needed for per-key colours; the normal `set` path writes only
-`09 cc`. A 2026-11-03 hardware matrix found no observable rendering,
-persistence or group effect from single-byte `09 d0` writes, so the
-experimental `set --game-flag` path was removed.
+and written **only** by `k622rgb config restore --custom` after a verified
+manifest, descriptor match and `--yes`; it is written last and read back. It is
+not needed for per-key colours; the normal `set` path writes only `09 cc`. A
+2026-11-03 hardware matrix found no visible rendering, persistence or group
+change from single-byte `09 d0` writes. The wider sweep then left a board
+non-enumerating, so the experimental `set --game-flag` path was removed and
+arbitrary d0 writes are forbidden. See
+[INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md) and
+[SAFETY.md](SAFETY.md).
 
 
 ## 6. Persistence
 
 Config and palette writes are applied immediately and persist across a
 replug/power cycle (the official app uses the same writes and no separate
-"save" step). Every write command takes a full read-back backup first unless
-`--no-backup` is given:
+"save" step). Every ordinary config/palette write command takes a full
+read-back backup first unless `--no-backup` is given; a custom restore always
+takes one.
 
 ```bash
 k622rgb config dump                 # timestamped backup in the XDG state dir
 k622rgb config dump --out ./backup  # explicit directory
 k622rgb config restore ./backup      # config + palette
-k622rgb config restore ./backup --custom  # also the two custom frames
+k622rgb config restore --verify-only ./backup
+k622rgb config seal ./backup         # add hashes to a legacy backup (meta.json only)
+k622rgb config restore --custom ./backup --yes  # also the two custom frames, d0 last
+k622rgb config restore --custom ./legacy --allow-unverified --yes
 ```
+
+`--verify-only` reports a legacy backup without a manifest as `unverified` and
+returns nonzero unless `--allow-unverified` is given; it never opens the
+device. `--no-backup` is refused with `--custom`. New backups use `meta.json`
+version 2 with a `files` map of each file's size and SHA-256; `config seal`
+adds that map to a legacy backup. The pre-restore backup for a custom restore
+contains `config-response.bin`, `colors-response.bin`,
+`custom1-response.bin` and `custom2-response.bin`.
 
 The backup contains:
 
@@ -207,9 +223,10 @@ profile-response.bin  1032-byte 84 d8 response (read-only; keymaps/macros)
 meta.json
 ```
 
-That is the full file set written by `config dump`. The automatic backup
-taken before a write contains `config-response.bin`, `colors-response.bin`
-and `meta.json` only.
+That is the full file set written by `config dump`. An automatic backup taken
+before an ordinary write contains `config-response.bin`,
+`colors-response.bin` and `meta.json`; a custom restore additionally backs up
+`custom1-response.bin` and `custom2-response.bin` before writing d0.
 
 ## 7. CLI examples
 
@@ -241,6 +258,8 @@ k622rgb mode set ripples-shining --color-index 2
 k622rgb off
 k622rgb config dump
 k622rgb config restore /path/to/backup
+k622rgb config restore --verify-only /path/to/backup
+k622rgb config restore --custom /path/to/backup --yes
 ```
 
 ## 8. Local profiles
@@ -282,3 +301,7 @@ k622rgb profile delete gaming
   See [KEYMAP.md](KEYMAP.md).
 - Firmware update, bootloader, flash and macro/keymap writes remain out of
   scope.
+- The `09 d0` table is read-only in normal use. Only `config restore --custom`
+  writes it, after a verified manifest, descriptor match, `--yes`, and a
+  pre-restore backup; arbitrary d0 writes are forbidden. See
+  [SAFETY.md](SAFETY.md) and [INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md).

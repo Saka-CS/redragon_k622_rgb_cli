@@ -173,7 +173,7 @@ report-6 `SetFeature` transfers in this order:
 | # | Report-6 payload prefix | Length | Meaning |
 |---:|---|---:|---|
 | 1 | `06 09 cc 00 40` | 1032 B | 126-slot RGB colour frame |
-| 2 | `06 09 d0 00 40` | 1032 B | constant latch/effect frame |
+| 2 | `06 09 d0 00 40` | 1032 B | constant latch/effect frame; written only by a verified `--custom` restore |
 | 3 | `06 03 c6 00 00` | 1032 B | constant config frame |
 
 Only the first packet varies with the chosen colours. Across all 13 captures:
@@ -196,9 +196,20 @@ Implementation: `set` sends the `09 cc` frame (the per-key colours).
 profile/keymap table is never written.
 
 The `09 d0` "game" byte was probed on 2026-11-03 with a single-byte matrix;
-it produced no observable rendering or persistence effect, so the experimental
-`set --game-flag` write path was removed. The byte offset remains a
-hypothesis, not a protocol constant.
+it produced no visible change. The probe then widened into a broad sweep
+(roughly 330 writes across offsets `0–5`, plane boundaries and `0xFF`, at
+roughly 0.12 s). The sweep was **stopped after the board stopped enumerating**,
+and the experimental `set --game-flag` write path was removed. The byte offset
+remains a hypothesis, not a protocol constant. Arbitrary `09 d0` writes are
+forbidden; see [INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md) and
+[SAFETY.md](SAFETY.md).
+
+A `09 d0` restore is allowed only through `config restore --custom`. It
+requires a verified per-file manifest, a descriptor match, `--yes`, and a
+pre-restore backup that includes the custom frames; `--no-backup` is refused
+with `--custom`. The write order is palette → config → custom frame 1
+(`09 cc`) → custom frame 2 (`09 d0`) last, and d0 is read back afterwards.
+`config restore --verify-only` never opens the device.
 
 
 ### 6.1 Capture sequence
@@ -392,20 +403,34 @@ slots.
 3. **Writes use only validated report-0x06 shapes:** `09 cc` per-key frames,
    `03 c6` config blocks, `08 c8` effect palettes, and the `09 d0`/`09 cc`
    custom frames during an explicit restore. Only `config restore --custom`
-   mutates a `09 d0` payload. Builders reject wrong lengths, headers and config
-   markers; there is no generic feature-write API.
+   mutates a `09 d0` payload, and it requires a verified manifest, a
+   descriptor match, `--yes`, and a pre-restore backup; `--no-backup` is
+   refused with `--custom`. There is no arbitrary offset/value path. Builders
+   reject wrong lengths, headers and config markers; there is no generic
+   feature-write API.
 4. **Writes require the captured descriptor hash.** A different descriptor is
    reported as `UNKNOWN` and refused before the device is opened.
 5. **Every config/palette write backs up first.** The tool reads the current
    config and palette into a timestamped backup directory before writing;
-   `config restore` is the recovery path. `--no-backup` is opt-in.
+   `config restore` is the recovery path. For `--custom`, the pre-restore
+   backup also includes `custom1-response.bin` and `custom2-response.bin`.
+   `--no-backup` is opt-in, except with `--custom`, where it is rejected.
 6. **`--dry-run` opens no device.** It prints the intended mode/parameter or
    per-key frame; nothing is written and no backup is created.
 7. **Never send firmware, bootloader, flash, macro, or keymap opcodes.** The
    `04 d8` profile/keymap table is read-only in this tool and is never written.
 8. **No driver detach.** hidraw coexists with `usbhid`; typing is unaffected.
 9. **Stop on unexpected errors.** `EPIPE`/`EINVAL` are findings, not invitations
-   to try other report IDs.
+   to try other report IDs. Stop on the first `EPIPE`, disconnect or
+   re-enumeration.
+10. **No arbitrary `09 d0` writes.** Never write unknown/reserved offsets or a
+    whole d0 table. The only d0 writer is `config restore --custom`; normal
+    commands (`set`, `group apply`, `mode set`, `off`, `color set`,
+    `profile load`) cannot reach it.
+11. **Read d0 back after writing it.** One forward d0 write per process is
+    allowed. On a read-back mismatch the tool attempts exactly one rollback of
+    custom frame 2; palette, config and custom frame 1 are not automatically
+    rolled back. See [SAFETY.md](SAFETY.md).
 
 ## 12. Verification status
 
@@ -421,10 +446,10 @@ slots.
 | 126-slot / 126-byte planes | **Confirmed on hardware** (R `8`, G `134`, B `260`) |
 | RGB order R,G,B | Confirmed from `Cfg.ini` |
 | Report-6 LED write packet | **Captured:** `09 cc` + 13 complete updates |
-| Write implementation (`set`/`mode`/`color`/`config`/`profile`, allowlist, state) | **Implemented; unit-tested** (246 tests) |
+| Write implementation (`set`/`mode`/`color`/`config`/`profile`, allowlist, state) | **Implemented; unit-tested** (288 tests) |
 | Hardware write test (`set Esc=red`) | **Confirmed:** Esc red, `1` green, `--off` clears |
 | Additive saved-frame behaviour | **Confirmed on hardware** |
-| `09 d0` companion | Not required for per-key colours. Read by `config dump`; written only by `config restore --custom`. Byte offset unverified; 2026-11-03 single-byte matrix showed no observable effect; experimental write path removed |
+| `09 d0` companion | Not required for per-key colours. Read by `config dump`; written only by `config restore --custom` after a verified-manifest, descriptor and `--yes` check. Byte offset unverified; the 2026-11-03 single-byte matrix showed no visible change, and the broader sweep left a board non-enumerating; experimental write path removed. See [INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md) |
 | Read-back backup for report 6 | **Confirmed via mailbox** (`89 cc`); `set --from-device` uses it |
 | Config read/write (`83 c6` / `03 c6`) | **Confirmed:** 136-byte no-op round trip |
 | Effect palette (`88 c8` / `08 c8`) | **Confirmed:** 441-byte round trip |
@@ -448,8 +473,11 @@ The capture and hardware-write gates are closed. Remaining work:
 2. Optional: daemon/IPC or reactive key effects (out of the current scope).
 
 Normal lighting control uses the captured `09 cc`, `03 c6` and `08 c8`
-shapes. Do not send `04 d8` or an arbitrary `09 d0` payload unless a new,
-captured need appears; `09 d0` is only written by `config restore --custom`.
+shapes. Do not send `04 d8` or any arbitrary `09 d0` payload. `09 d0` is only
+written by `config restore --custom`, after a verified backup, a descriptor
+match, `--yes`, and a pre-restore backup, and it is written last and read
+back. See [SAFETY.md](SAFETY.md) and
+[INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md).
 
 ## 14. Lighting configuration and effects
 

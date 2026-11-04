@@ -10,7 +10,7 @@ the exact report shapes captured from the official software.
 
 ## Status
 
-Current release: `k622rgb` `0.5.0` (246 unit tests pass with
+Current release: `k622rgb` `0.5.0` (288 unit tests pass with
 `python3 -m unittest discover -s tests -v`).
 
 Everything below is implemented and was verified on the physical keyboard:
@@ -185,7 +185,9 @@ Each effect has seven palette entries:
 ```
 
 Every config or palette write is preceded by a full read-back backup unless
-`--no-backup` is given. `config restore` is the recovery path.
+`--no-backup` is given. `config restore` is the recovery path. `--no-backup`
+is rejected with `--custom`, and a custom restore also takes a pre-restore
+backup that includes both custom frames.
 
 ## Backups and profiles
 
@@ -195,7 +197,9 @@ Every config or palette write is preceded by a full read-back backup unless
 ./bin/k622rgb config dump --out ./backup
 ./bin/k622rgb config seal ./backup        # add hashes to a legacy backup
 ./bin/k622rgb config restore ./backup     # restore config + palette
-./bin/k622rgb config restore ./backup --custom  # also restore frames
+./bin/k622rgb config restore --verify-only ./backup
+./bin/k622rgb config restore --custom ./backup --yes  # d0 last
+./bin/k622rgb config restore --custom ./legacy --allow-unverified --yes
 
 ./bin/k622rgb profile save gaming
 ./bin/k622rgb profile load gaming
@@ -203,6 +207,14 @@ Every config or palette write is preceded by a full read-back backup unless
 ./bin/k622rgb profile show gaming
 ./bin/k622rgb profile delete gaming
 ```
+
+`--verify-only` reports a legacy backup without a manifest as `unverified` and
+returns nonzero unless `--allow-unverified` is given; it never opens the
+device. `config seal` writes only `meta.json` and also never opens the device;
+use `config seal --force` to replace an existing manifest. New backups use
+`meta.json` version 2 with a `files` map of each file's size and SHA-256. The pre-restore backup for `--custom` contains
+`config-response.bin`, `colors-response.bin`, `custom1-response.bin` and
+`custom2-response.bin`.
 
 Profiles are local lighting snapshots (config, palette and optionally the
 custom per-key frame), stored under `~/.config/k622rgb/profiles` and respecting
@@ -248,13 +260,35 @@ bottom row and the 36 dead slots.
 
 ## Safety
 
-- The only writable report is report `0x06`, and only the exact captured
-  `09 cc`, `03 c6`, `08 c8` and custom-frame shapes can be sent.
+- The only report used for lighting/config data is report `0x06`; report `0x05`
+  is limited to the captured mailbox read commands. Only the exact captured
+  `09 cc`, `03 c6`, `08 c8` and custom-frame shapes can be sent. There is no
+  generic feature-write or offset/value API.
+- **Never write arbitrary `09 d0` bytes or unknown/reserved offsets.** The
+  `09 d0` table is persistent, undocumented firmware state; the 2026-11-03
+  broad sweep left a board non-enumerating. See
+  [docs/INCIDENT-2026-11-03.md](docs/INCIDENT-2026-11-03.md).
+- `config restore --custom` is the **only** d0 writer. It requires a verified
+  per-file manifest, a descriptor match, `--yes`, and a pre-restore backup
+  that includes both custom frames. `--no-backup` is refused with `--custom`.
+  d0 is written last and read back; on mismatch exactly one custom-frame-2
+  rollback is attempted. Normal commands (`set`, `group apply`, `mode set`,
+  `off`, `color set`, `profile load`) cannot reach the d0 writer.
+- Stop on the first `EPIPE`, disconnect or re-enumeration; do not retry a
+  failed write. A successful flash is not a compatibility check.
+- Keep a verified, durable backup outside `/tmp` before any write, and know
+  the recovery path (ISP/programmer or RMA) before writing. Application-level
+  backups cannot restore a board that no longer enumerates.
 - Reads use declared report `0x05` mailbox commands or report `0x06`
   responses.
 - Writes are refused unless the IF1 descriptor matches the captured K622 hash.
-- No firmware update, bootloader, flash, keymap or macro path exists.
-- Config/palette writes back up the current state first (unless `--no-backup`).
+- No firmware update, bootloader, flash, keymap or macro path exists. **Do not
+  flash K621 firmware onto a K622.**
+- Config/palette writes back up the current state first (unless `--no-backup`
+  is given).
+- SHA-256 manifests and `config seal` are integrity checks, not provenance;
+  sealing trusts the current directory contents. See
+  [docs/SAFETY.md](docs/SAFETY.md) for the full policy and recovery ladder.
 
 ## Troubleshooting
 
@@ -275,6 +309,8 @@ bottom row and the 36 dead slots.
 - [docs/KEYMAP.md](docs/KEYMAP.md) — slot map, dead slots and aliases
 - [docs/FINDINGS.md](docs/FINDINGS.md) — reverse-engineering notes and hardware evidence
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) — architecture, testing and acceptance criteria
+- [docs/SAFETY.md](docs/SAFETY.md) — hardware write policy, restore safeguards and recovery ladder
+- [docs/INCIDENT-2026-11-03.md](docs/INCIDENT-2026-11-03.md) — the `09 d0` sweep incident record
 
 ## License
 

@@ -7,8 +7,9 @@
 - **Status:** per-key writes, colour groups, built-in effects,
   brightness/speed, the effect palette, config backup/restore and local
   profiles are implemented and verified on the physical K622 (`k622rgb`
-  `0.5.0`; 246 unit tests). The extra G/MR/media keys are **not RGB**. Only
-  optional work remains.
+  `0.5.0`; 288 unit tests). The extra G/MR/media keys are **not RGB**. Only
+  optional work remains. The 2026-11-03 `09 d0` sweep left a board
+  non-enumerating; see [INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md).
 
 > **2026-11-01 correction — packet-slot sweep.** The `Cfg.ini` LED slot is not
 > the report-0x06 packet index. The packet is row-major
@@ -200,9 +201,11 @@ colours it sends only the `09 cc` frame.
 
 The colour frame alone is sufficient. The constant `09 d0` and `03 c6`
 companions captured alongside it are **not required** for per-key colours;
-`03 c6` is used separately for mode/config writes, and `09 d0` is only written
-by `config restore --custom`. The slot/plane mapping derived from `Cfg.ini`
-and the capture matches the physical board.
+`03 c6` is used separately for mode/config writes, and `09 d0` is written only
+by `config restore --custom` after a verified-backup, descriptor and `--yes`
+check. Arbitrary d0 offsets are forbidden; see [SAFETY.md](SAFETY.md). The
+slot/plane mapping derived from `Cfg.ini` and the capture matches the physical
+board.
 
 Implementation note: CPython's `fcntl` refuses an immutable `bytes` ioctl
 argument over 1024 bytes (`ValueError: ioctl argument 3 is too long`). Passing
@@ -501,10 +504,10 @@ on the K622 produced the 5-second `ETIMEDOUT` that motivated this pivot.
 | 126-slot / 126-byte planes | **Confirmed by capture** | R `8`, G `134`, B `260` |
 | RGB channel order R,G,B | **Confirmed** | `Cfg.ini` `RGBIndex=0,1,2` |
 | Report-6 lighting write packet | **Captured** | `09 cc` + 13 complete updates |
-| Write implementation (`set`/`mode`/`color`/`config`/`profile`, allowlist, state) | **Implemented, unit-tested** | 246 tests; `--dry-run` |
+| Write implementation (`set`/`mode`/`color`/`config`/`profile`, allowlist, state) | **Implemented, unit-tested** | 288 tests; `--dry-run` |
 | Hardware write (`set Esc=red`) | **Confirmed** | Esc red; `1` green; `--off` clears |
 | Additive saved-frame behaviour | **Confirmed on hardware** | Second `set` kept the first colour |
-| `09 d0` / `03 c6` companions | **Not required for per-key colours** | Colour frame alone works; `03 c6` is used for mode config; single-byte `09 d0` probe showed no observable effect (2026-11-03) |
+| `09 d0` / `03 c6` companions | **Not required for per-key colours; d0 write path restricted** | Colour frame alone works; `03 c6` is used for mode config; the single-byte `09 d0` matrix produced no visible change (2026-11-03), and the broader sweep left a board non-enumerating. Only `config restore --custom` may write d0, after verification. See [INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md) |
 | Config read (`05 83 c6` → 136 B at response `0x08`) | **Confirmed** | Hardware read + no-op write round trip |
 | Effect palette (`05 88 c8` / `08 c8`, 441 B) | **Confirmed** | Hardware write/read round trip |
 | 20 effects + Self-define + OFF | **Confirmed** | Mode sweep on hardware + official UI under Wine 11 |
@@ -746,7 +749,7 @@ not exercised in the captured paths.
 `group apply` / `set --group NAME=COLOR` generate the same `09 cc` frame. No
 `09 d0` write is needed.
 
-### The `09 d0` "game" byte (tested negative; write path removed)
+### The `09 d0` "game" byte (tested negative; removed after the 2026-11-03 incident)
 
 The app's lighting routine has exactly one `09 cc`/`09 d0` writer
 (`0x445920`), called from `0x411150`. The `09 d0` payload is sourced from
@@ -767,8 +770,8 @@ Because the byte location was unknown, an opt-in `set --game-flag` experiment
 was added to probe it. It read the current `09 d0` frame from the keyboard,
 changed one byte at a caller-supplied offset, sent it after the `09 cc` frame,
 and backed up the config, palette, `09 cc` and `09 d0` tables first. It was
-removed after the hardware validation below found no observable effect; the
-probe tools were removed with it.
+removed in commit `96d187d` after the validation matrix and the wider sweep
+below; the probe tools were removed with it.
 
 #### Hardware validation (2026-11-03)
 
@@ -792,8 +795,33 @@ normal `set`, a mode switch and a replug, but the display stayed the plain
 `09 cc` frame. Key-press/game-input behaviour was not tested, so this does not
 rule out a non-RGB meaning for the byte.
 
+The wider C2a sweep went beyond that matrix: roughly 330 `09 d0` writes
+covering offsets `0–5` (the zero header), plane boundaries and `0xFF` values at
+roughly 0.12 s intervals. Two earlier simple d0 writes had already stalled
+with `EPIPE`, and the tool retried reads instead of stopping. The sweep process
+was then interrupted mid-write, so its `finally` restore did not run. The
+keyboard went dark and stopped enumerating as `258a:0049`; a replug on two
+laptops did not bring it back. The exact failing byte is unknown. The class of
+cause is not: unvalidated writes into persistent, undocumented firmware state
+with no enforced stop. See
+[INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md) and
+[SAFETY.md](SAFETY.md).
+
 The default offset remains a hypothesis, not a confirmed protocol field. The
-2026-11-03 matrix above found no observable effect, so the "single `09 d0`
+2026-11-03 matrix above found no visible change, so the "single `09 d0`
 byte enables game mode" hypothesis is unsupported for RGB rendering. The
 experimental write path and probe tools were removed. Backups made during
-testing can still be recovered with `config restore --custom BACKUP`.
+testing are recoverable with `config restore --custom <backup> --yes` **only
+while the board still enumerates**, only if the backup has a verified manifest
+(or is deliberately accepted with `--allow-unverified`), and only if its
+descriptor matches the live device. A backup cannot restore a board that no
+longer appears on USB.
+
+## 13. Safety policy
+
+The hardware write policy is [SAFETY.md](SAFETY.md). In short: only exact
+captured report shapes are writable; arbitrary `09 d0` offsets are forbidden;
+`config restore --custom` is the only d0 writer and requires a verified
+backup, a descriptor match, `--yes`, and a pre-restore backup that includes
+the custom frames. The incident record is
+[INCIDENT-2026-11-03.md](INCIDENT-2026-11-03.md).
